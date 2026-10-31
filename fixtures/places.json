@@ -1,0 +1,66 @@
+[
+  {
+    "place_id": "p001",
+    "name": "骰子桌游（中山路店）",
+    "kind": "board_game",
+    "price_per_person": 45,
+    "open_min": 600,
+    "close_min": 1380,
+    "tags": ["board_game"],
+    "noise": "low",
+    "has_private_room": true,
+    "score": 4.6,
+    "distance_min": 5
+  },
+  {
+    "place_id": "p002",
+    "name": "疯狂桌游吧（城西）",
+    "kind": "board_game",
+    "price_per_person": 30,
+    "open_min": 600,
+    "close_min": 1440,
+    "tags": ["board_game"],
+    "noise": "high",
+    "has_private_room": false,
+    "score": 4.0,
+    "distance_min": 25
+  },
+  {
+    "place_id": "p003",
+    "name": "阿婆面馆",
+    "kind": "restaurant",
+    "price_per_person": 38,
+    "open_min": 600,
+    "close_min": 1260,
+    "tags": ["noodle"],
+    "noise": "low",
+    "score": 4.3,
+    "distance_min": 3
+  },
+  {
+    "place_id": "p004",
+    "name": "蜀香火锅",
+    "kind": "restaurant",
+    "price_per_person": 88,
+    "open_min": 660,
+    "close_min": 1320,
+    "tags": ["hotpot", "spicy"],
+    "noise": "high",
+    "has_private_room": true,
+    "score": 4.7,
+    "distance_min": 8
+  },
+  {
+    "place_id": "p005",
+    "name": "江南小馆",
+    "kind": "restaurant",
+    "price_per_person": 66,
+    "open_min": 630,
+    "close_min": 1290,
+    "tags": ["chinese"],
+    "noise": "mid",
+    "has_private_room": true,
+    "score": 4.5,
+    "distance_min": 10
+  }
+]
