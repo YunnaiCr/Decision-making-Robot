@@ -2,18 +2,21 @@
 
 from .models import Budget, Constraint, FinalDraft, VerificationResult, Verdict
 
+PRICE_KEY = "cost_per_person"
+
 
 def check_budget(c: Budget, draft: FinalDraft) -> Verdict:
-    """预算：cost_per_person 求和就是人均，乘人数是总价。"""
+    """预算：从 attrs 里取每人费用。取不到就返回 None（无法判定）。"""
     if not draft.slots:
         return Verdict(constraint_id=c.id, ok=None, detail="还没有方案")
 
     per_person = 0
     for slot in draft.slots:
-        if slot.cost_per_person is None:
+        price = slot.attrs.get(PRICE_KEY)
+        if price is None:
             where = slot.place_name or slot.place_id or "某个活动"
             return Verdict(constraint_id=c.id, ok=None, detail=f"{where} 没有价格")
-        per_person += slot.cost_per_person
+        per_person += price
 
     headcount = max(len(draft.participants), 1)
     total = per_person * headcount

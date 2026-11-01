@@ -56,13 +56,13 @@ class Observation(BaseModel):
 
 
 class Slot(BaseModel):
-    """一个活动。cost_per_person 是每人费用，总价 = 每人费用 x 人数。"""
+    """一个活动。attrs 装这个活动自己的属性（钱、游戏名等），骨架不认识它们。"""
     start_min: int = Field(ge=0, le=1440)
     end_min: int = Field(ge=0, le=1440)
     activity: str
     place_id: str | None = None
     place_name: str = ""
-    cost_per_person: int | None = Field(default=None, ge=0)
+    attrs: dict[str, Any] = Field(default_factory=dict)
 
 
 class FinalDraft(BaseModel):

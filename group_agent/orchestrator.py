@@ -11,7 +11,7 @@ from .models import (
     VerificationResult,
 )
 from .tools import dispatch
-from .verifier import verify
+from .verifier import PRICE_KEY, verify
 
 MAX_STEPS = 12
 MAX_REJECTIONS = 3
@@ -41,7 +41,7 @@ def plan(state: GroupState) -> ActionRequest | FinalDraft:
 
 
 def build_draft(state: GroupState) -> FinalDraft:
-    """挑第一家桌游 + 第一家餐厅。真实版本这里会做权衡。"""
+    """挑第一家桌游 + 第一家餐厅。钱放进 attrs，骨架不认它。"""
     board = state.found["board_game"][0]
     dinner = state.found["restaurant"][0]
     return FinalDraft(
@@ -54,7 +54,7 @@ def build_draft(state: GroupState) -> FinalDraft:
                 activity="board_game",
                 place_id=board["place_id"],
                 place_name=board["name"],
-                cost_per_person=board["price_per_person"],
+                attrs={PRICE_KEY: board["price_per_person"]},
             ),
             Slot(
                 start_min=1065,
@@ -62,7 +62,7 @@ def build_draft(state: GroupState) -> FinalDraft:
                 activity="dinner",
                 place_id=dinner["place_id"],
                 place_name=dinner["name"],
-                cost_per_person=dinner["price_per_person"],
+                attrs={PRICE_KEY: dinner["price_per_person"]},
             ),
         ],
     )
@@ -74,20 +74,27 @@ def render_rejection(result: VerificationResult) -> str:
     return "；".join(parts)
 
 
-def to_final(state: GroupState, draft: FinalDraft) -> FinalPlan:
-    per_person = sum(s.cost_per_person or 0 for s in draft.slots)
+def to_final(state: GroupState, draft: FinalDraft, result: VerificationResult) -> FinalPlan:
     headcount = len(draft.participants)
-    total = per_person * headcount
     when = []
     for s in draft.slots:
-        hh = s.start_min // 60
-        mm = s.start_min % 60
-        when.append(f"{hh:02d}:{mm:02d} 去 {s.place_name}")
-    message = (
-        f"那就定在 {state.date}："
-        + "，然后 ".join(when)
-        + f"。{headcount} 个人，人均约 {per_person} 元，总共 {total} 元左右。"
-    )
+        when.append(f"{s.start_min // 60:02d}:{s.start_min % 60:02d} 去 {s.place_name}")
+
+    prices = [s.attrs.get(PRICE_KEY) for s in draft.slots]
+    if all(p is not None for p in prices):
+        per_person = sum(prices)
+        total = per_person * headcount
+        cost_part = f"。{headcount} 个人，人均约 {per_person} 元，总共 {total} 元左右。"
+    else:
+        per_person = None
+        total = None
+        cost_part = f"。{headcount} 个人。"
+
+    message = f"那就定在 {state.date}：" + "，然后 ".join(when) + cost_part
+    if result.undecided:
+        notes = "；".join(v.detail for v in result.undecided)
+        message += f"（还没核实：{notes}）"
+
     return FinalPlan(
         status="ok",
         date=state.date,
@@ -115,8 +122,8 @@ def run(chat: dict) -> FinalPlan:
 
         if isinstance(decision, FinalDraft):
             result = verify(state.constraints, decision)
-            if result.passed and not result.undecided:
-                return to_final(state, decision)
+            if result.passed:
+                return to_final(state, decision, result)
             state.rejections.append(render_rejection(result))
             continue
 
