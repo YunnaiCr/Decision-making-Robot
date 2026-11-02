@@ -5,6 +5,7 @@ import os
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -61,6 +62,31 @@ def post(url: str, payload: dict, key: str) -> dict:
         return json.loads(response.read().decode("utf-8"))
 
 
+def optional_params() -> dict[str, Any]:
+    """可选请求参数：输出上限 + 透传字段（试参数用，不写死）。"""
+    extra: dict[str, Any] = {}
+
+    temperature = os.environ.get("LLM_TEMPERATURE", "").strip()
+    if temperature:
+        extra["temperature"] = float(temperature)
+
+    max_tokens = os.environ.get("LLM_MAX_TOKENS", "").strip()
+    if max_tokens:
+        extra["max_tokens"] = int(max_tokens)
+
+    raw = os.environ.get("LLM_EXTRA_JSON", "").strip()
+    if raw:
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise LLMError(f"LLM_EXTRA_JSON 不是合法 JSON: {exc}") from exc
+        if not isinstance(parsed, dict):
+            raise LLMError("LLM_EXTRA_JSON 必须是一个 JSON 对象")
+        extra.update(parsed)
+
+    return extra
+
+
 def complete_json(
     system: str,
     user: str,
@@ -81,9 +107,9 @@ def complete_json(
                 {"role": "system", "content": system},
                 {"role": "user", "content": build_prompt(user, schema)},
             ],
-            "temperature": 0,
             "response_format": {"type": "json_object"},
         }
+        payload.update(optional_params())
         started = time.monotonic()
         try:
             response = send(base + "/chat/completions", payload, key)
@@ -107,3 +133,25 @@ def complete_json(
         return LLMResult(data=data, tokens=tokens, ms=ms)
 
     raise LLMError(f"调了 {retries + 1} 次都失败：{last_error}")
+
+
+def load_dotenv(path: Path | None = None) -> None:
+    """读仓库根的 .env，只补没设过的变量。不引第三方依赖。"""
+    env_path = path or Path(__file__).resolve().parent.parent / ".env"
+    if not env_path.exists():
+        return
+    for raw in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        name = name.strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in chr(34) + chr(39):
+            value = value[1:-1]
+        if name and name not in os.environ:
+            os.environ[name] = value
+
+
+load_dotenv()
+
