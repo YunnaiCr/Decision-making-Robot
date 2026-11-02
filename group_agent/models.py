@@ -33,7 +33,23 @@ class Budget(ConstraintBase):
         return self
 
 
-Constraint = Annotated[Budget, Field(discriminator="kind")]
+class Availability(ConstraintBase):
+    """who 只在 [free_start_min, free_end_min] 内可用。"""
+    kind: Literal["availability"] = "availability"
+    free_start_min: int = Field(ge=0, le=1440)
+    free_end_min: int = Field(ge=0, le=1440)
+
+
+class Diet(ConstraintBase):
+    """不能碰的东西，匹配 Candidate.tags。"""
+    kind: Literal["diet"] = "diet"
+    avoid: list[str] = Field(min_length=1)
+
+
+Constraint = Annotated[
+    Budget | Diet | Availability,
+    Field(discriminator="kind"),
+]
 
 
 class ErrorInfo(BaseModel):
@@ -85,13 +101,30 @@ class VerificationResult(BaseModel):
     undecided: list[Verdict] = Field(default_factory=list)
 
 
+class Candidate(BaseModel):
+    """工具查回来的一家店。字段为 None 表示不知道，不是没有。"""
+    model_config = ConfigDict(extra="forbid")
+
+    place_id: str = Field(pattern=r"^p\d{3}$")
+    name: str = Field(min_length=1)
+    kind: Literal["board_game", "restaurant"]
+    price_per_person: int = Field(ge=0)
+    open_min: int = Field(ge=0, le=1440)
+    close_min: int = Field(ge=0, le=1440)
+    tags: list[str] = Field(default_factory=list)
+    noise: Literal["low", "mid", "high"] | None = None
+    has_private_room: bool | None = None
+    score: float | None = Field(default=None, ge=0, le=5)
+    distance_min: int | None = Field(default=None, ge=0)
+
+
 class GroupState(BaseModel):
     """主循环里共享的状态。目前只有预算约束，后面会变厚。"""
     goal: str = ""
     date: str | None = None
     participants: list[str] = Field(default_factory=list)
     constraints: list[Constraint] = Field(default_factory=list)
-    found: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
+    found: dict[str, list[Candidate]] = Field(default_factory=dict)
     rejections: list[str] = Field(default_factory=list)
 
 
@@ -103,3 +136,20 @@ class FinalPlan(BaseModel):
     slots: list[Slot] = Field(default_factory=list)
     total_cost: int | None = None
     message: str = ""
+
+class Message(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    i: int = Field(ge=1)
+    who: str = Field(min_length=1)
+    min: int = Field(ge=0)
+    text: str
+
+
+class ChatLog(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    chat_id: str
+    title: str = ""
+    messages: list[Message] = Field(default_factory=list)
+

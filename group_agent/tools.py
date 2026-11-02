@@ -2,40 +2,39 @@
 
 import json
 from pathlib import Path
-from typing import Any
 
-from .models import ActionRequest, ErrorInfo, Observation
+from .models import ActionRequest, Candidate, ErrorInfo, Observation
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 
-_places: list[dict[str, Any]] | None = None
+_places: list[Candidate] | None = None
 
 
-def load_places() -> list[dict[str, Any]]:
-    """读一次，之后用缓存。"""
+def load_places() -> list[Candidate]:
+    """读一次并校验，之后用缓存。字段写错会在这里当场报错。"""
     global _places
     if _places is None:
         text = (FIXTURES / "places.json").read_text(encoding="utf-8")
-        _places = json.loads(text)
+        _places = [Candidate.model_validate(item) for item in json.loads(text)]
     return _places
 
 
-def search_places(kind: str, max_price: int | None = None) -> list[dict[str, Any]]:
+def search_places(kind: str, max_price: int | None = None) -> list[Candidate]:
     """按类型查店，可按人均价上限过滤。"""
-    found = []
+    found: list[Candidate] = []
     for place in load_places():
-        if place["kind"] != kind:
+        if place.kind != kind:
             continue
-        if max_price is not None and place["price_per_person"] > max_price:
+        if max_price is not None and place.price_per_person > max_price:
             continue
         found.append(place)
     return found
 
 
-def get_place(place_id: str) -> dict[str, Any] | None:
+def get_place(place_id: str) -> Candidate | None:
     """按编号查一家店，查不到返回 None。"""
     for place in load_places():
-        if place["place_id"] == place_id:
+        if place.place_id == place_id:
             return place
     return None
 

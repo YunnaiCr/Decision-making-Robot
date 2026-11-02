@@ -3,7 +3,11 @@
 from .models import (
     ActionRequest,
     Budget,
+    Availability,
+    ChatLog,
+    Candidate,
     Constraint,
+    Diet,
     FinalDraft,
     FinalPlan,
     GroupState,
@@ -17,15 +21,29 @@ MAX_STEPS = 12
 MAX_REJECTIONS = 3
 
 
-def understand(chat: dict) -> tuple[list[str], list[Constraint]]:
+def understand(chat: ChatLog) -> tuple[list[str], list[Constraint]]:
     """假理解：直接返回硬编码结果。以后换成真模型。"""
     participants = ["小明", "小王", "小李"]
     constraints: list[Constraint] = [
         Budget(
-            id="c1",
+            id="c-budget",
             severity="hard",
             evidence="小明：预算别太高，一人一百以内吧",
             per_person_max=100,
+        ),
+        Diet(
+            id="c-diet",
+            severity="hard",
+            evidence="小李：别吃火锅，上次吃伤了",
+            avoid=["hotpot"],
+        ),
+        Availability(
+            id="c-avail",
+            severity="hard",
+            evidence="小王：我三点之前不行，有课",
+            who=["小王"],
+            free_start_min=900,
+            free_end_min=1440,
         ),
     ]
     return participants, constraints
@@ -52,17 +70,17 @@ def build_draft(state: GroupState) -> FinalDraft:
                 start_min=900,
                 end_min=1050,
                 activity="board_game",
-                place_id=board["place_id"],
-                place_name=board["name"],
-                attrs={PRICE_KEY: board["price_per_person"]},
+                place_id=board.place_id,
+                place_name=board.name,
+                attrs={PRICE_KEY: board.price_per_person},
             ),
             Slot(
                 start_min=1065,
                 end_min=1140,
                 activity="dinner",
-                place_id=dinner["place_id"],
-                place_name=dinner["name"],
-                attrs={PRICE_KEY: dinner["price_per_person"]},
+                place_id=dinner.place_id,
+                place_name=dinner.name,
+                attrs={PRICE_KEY: dinner.price_per_person},
             ),
         ],
     )
@@ -105,10 +123,14 @@ def to_final(state: GroupState, draft: FinalDraft, result: VerificationResult) -
     )
 
 
-def run(chat: dict) -> FinalPlan:
+def candidates_by_id(state: GroupState) -> dict[str, Candidate]:
+    return {place.place_id: place for group in state.found.values() for place in group}
+
+
+def run(chat: ChatLog) -> FinalPlan:
     participants, constraints = understand(chat)
     state = GroupState(
-        goal=chat.get("title", ""),
+        goal=chat.title,
         date="2026-11-07",
         participants=participants,
         constraints=constraints,
@@ -121,7 +143,7 @@ def run(chat: dict) -> FinalPlan:
         decision = plan(state)
 
         if isinstance(decision, FinalDraft):
-            result = verify(state.constraints, decision)
+            result = verify(state.constraints, decision, candidates_by_id(state))
             if result.passed:
                 return to_final(state, decision, result)
             state.rejections.append(render_rejection(result))
