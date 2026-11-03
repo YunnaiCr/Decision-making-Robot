@@ -1,19 +1,25 @@
-"""主循环。目前两个 LLM 节点都是假的，先把骨架跑通。"""
+"""主循环：理解、规划、表达三个节点都接真模型。"""
 
+import json
+from typing import Callable
+
+from pydantic import ValidationError
+
+from . import llm
 from .models import (
-    ActionRequest,
-    Budget,
-    Availability,
-    ChatLog,
     Candidate,
+    ChatLog,
     Constraint,
-    Diet,
     FinalDraft,
     FinalPlan,
     GroupState,
-    Slot,
+    MessageOut,
+    PlannerDecision,
+    StateDelta,
     VerificationResult,
 )
+from .prompts import express as express_prompt
+from .prompts import planning, understanding
 from .tools import dispatch
 from .verifier import PRICE_KEY, verify
 
@@ -21,69 +27,111 @@ MAX_STEPS = 12
 MAX_REJECTIONS = 3
 
 
-def understand(chat: ChatLog) -> tuple[list[str], list[Constraint]]:
-    """假理解：直接返回硬编码结果。以后换成真模型。"""
-    participants = ["小明", "小王", "小李"]
-    constraints: list[Constraint] = [
-        Budget(
-            id="c-budget",
-            severity="hard",
-            evidence="小明：预算别太高，一人一百以内吧",
-            per_person_max=100,
-        ),
-        Diet(
-            id="c-diet",
-            severity="hard",
-            evidence="小李：别吃火锅，上次吃伤了",
-            avoid=["hotpot"],
-        ),
-        Availability(
-            id="c-avail",
-            severity="hard",
-            evidence="小王：我三点之前不行，有课",
-            who=["小王"],
-            free_start_min=900,
-            free_end_min=1440,
-        ),
-    ]
-    return participants, constraints
+def format_chat(chat: ChatLog) -> str:
+    """编号 + 说话人 + 原文，一行一条。"""
+    lines = [f"{m.i:02d} {m.who}：{m.text}" for m in chat.messages]
+    return "聊天记录：" + chr(10) + chr(10).join(lines)
 
 
-def plan(state: GroupState) -> ActionRequest | FinalDraft:
-    """假规划：按已有数据决定下一步。以后换成真模型。"""
-    if "board_game" not in state.found:
-        return ActionRequest(tool="search_places", arguments={"kind": "board_game"})
-    if "restaurant" not in state.found:
-        return ActionRequest(tool="search_places", arguments={"kind": "restaurant"})
-    return build_draft(state)
+def format_state(state: GroupState) -> str:
+    """把状态摊成文字。这是规划层能看到的全部信息。"""
+    lines: list[str] = []
+    date_text = state.date or "还没定"
+    who_text = "、".join(state.participants) or "还不知道"
+    lines.append(f"目标：{state.goal}")
+    lines.append(f"日期：{date_text}")
+    lines.append(f"参与者：{who_text}")
+
+    lines.append("约束：")
+    if state.constraints:
+        for c in state.constraints:
+            data = c.model_dump(exclude_none=True)
+            lines.append("  - " + json.dumps(data, ensure_ascii=False))
+    else:
+        lines.append("  （无）")
+
+    lines.append("已经查到的店：")
+    if state.found:
+        for places in state.found.values():
+            for p in places:
+                lines.append(
+                    f"  {p.place_id} {p.name} 人均{p.price_per_person} "
+                    f"tags={p.tags} 营业{p.open_min}-{p.close_min}"
+                )
+    else:
+        lines.append("  （还没查）")
+
+    if state.rejections:
+        lines.append("被打回过的原因（不要重复同样的方案）：")
+        for r in state.rejections:
+            lines.append("  - " + r)
+
+    if state.unknowns:
+        lines.append("还不清楚的事：")
+        for u in state.unknowns:
+            lines.append("  - " + u)
+
+    return chr(10).join(lines)
 
 
-def build_draft(state: GroupState) -> FinalDraft:
-    """挑第一家桌游 + 第一家餐厅。钱放进 attrs，骨架不认它。"""
-    board = state.found["board_game"][0]
-    dinner = state.found["restaurant"][0]
-    return FinalDraft(
-        date=state.date,
-        participants=state.participants,
-        slots=[
-            Slot(
-                start_min=900,
-                end_min=1050,
-                activity="board_game",
-                place_id=board.place_id,
-                place_name=board.name,
-                attrs={PRICE_KEY: board.price_per_person},
-            ),
-            Slot(
-                start_min=1065,
-                end_min=1140,
-                activity="dinner",
-                place_id=dinner.place_id,
-                place_name=dinner.name,
-                attrs={PRICE_KEY: dinner.price_per_person},
-            ),
-        ],
-    )
+def extract(chat: ChatLog) -> StateDelta:
+    """调模型把聊天记录变成 StateDelta。格式不对重试一次。"""
+    user = understanding.RULES + chr(10) + chr(10) + format_chat(chat)
+    schema = StateDelta.model_json_schema()
+    last_error = ""
+
+    for _ in range(2):
+        result = llm.complete_json(system=understanding.SYSTEM, user=user, schema=schema)
+        try:
+            return StateDelta.model_validate(result.data)
+        except ValidationError as exc:
+            last_error = str(exc)
+
+    raise RuntimeError("理解层输出不合格式：" + last_error[:300])
+
+
+def apply_delta(state: GroupState, delta: StateDelta) -> GroupState:
+    """把增量应用到状态上。id 由这里统一分配。"""
+    if delta.date:
+        state.date = delta.date
+    if delta.participants:
+        state.participants = list(delta.participants)
+
+    dropped = set(delta.drop_constraints)
+    kept = [c for c in state.constraints if c.id not in dropped]
+
+    added: list[Constraint] = []
+    for c in delta.add_constraints:
+        if not c.id:
+            c = c.model_copy(update={"id": f"c{state.next_id}"})
+            state.next_id += 1
+        added.append(c)
+
+    state.constraints = kept + added
+    state.unknowns = list(state.unknowns) + list(delta.unknowns)
+    return state
+
+
+def understand(chat: ChatLog) -> GroupState:
+    """真理解：抽成增量，应用到空状态上。"""
+    delta = extract(chat)
+    return apply_delta(GroupState(goal=chat.title), delta)
+
+
+def plan(state: GroupState) -> PlannerDecision:
+    """调模型决定下一步。格式不对重试一次。"""
+    user = planning.RULES + chr(10) + chr(10) + format_state(state)
+    schema = PlannerDecision.model_json_schema()
+    last_error = ""
+
+    for _ in range(2):
+        result = llm.complete_json(system=planning.SYSTEM, user=user, schema=schema)
+        try:
+            return PlannerDecision.model_validate(result.data)
+        except ValidationError as exc:
+            last_error = str(exc)
+
+    raise RuntimeError("规划层输出不合格式：" + last_error[:300])
 
 
 def render_rejection(result: VerificationResult) -> str:
@@ -92,67 +140,132 @@ def render_rejection(result: VerificationResult) -> str:
     return "；".join(parts)
 
 
-def to_final(state: GroupState, draft: FinalDraft, result: VerificationResult) -> FinalPlan:
-    headcount = len(draft.participants)
+def candidates_by_id(state: GroupState) -> dict[str, Candidate]:
+    return {place.place_id: place for group in state.found.values() for place in group}
+
+
+def plan_facts(state: GroupState, draft: FinalDraft) -> dict:
+    """expression 节点能看到的全部事实。多一项都不给。"""
+    slots = []
+    for s in draft.slots:
+        slots.append({
+            "activity": s.activity,
+            "place": s.place_name,
+            "start": f"{s.start_min // 60:02d}:{s.start_min % 60:02d}",
+            "end": f"{s.end_min // 60:02d}:{s.end_min % 60:02d}",
+            "cost_per_person": s.attrs.get(PRICE_KEY),
+        })
+    prices = [s.attrs.get(PRICE_KEY) for s in draft.slots]
+    per_person = sum(prices) if all(p is not None for p in prices) else None
+    total = per_person * len(draft.participants) if per_person is not None else None
+    return {
+        "date": state.date,
+        "participants": draft.participants,
+        "slots": slots,
+        "per_person": per_person,
+        "total_cost": total,
+    }
+
+
+def express(state: GroupState, draft: FinalDraft, result: VerificationResult) -> str:
+    """调模型把事实改写成一句话。只改措辞，不许新增。"""
+    facts = plan_facts(state, draft)
+    facts["unverified"] = [v.detail for v in result.undecided]
+    user = express_prompt.RULES + chr(10) + chr(10) + json.dumps(facts, ensure_ascii=False, indent=2)
+    result_llm = llm.complete_json(
+        system=express_prompt.SYSTEM, user=user, schema=MessageOut.model_json_schema()
+    )
+    return MessageOut.model_validate(result_llm.data).message
+
+
+def template_message(state: GroupState, draft: FinalDraft, result: VerificationResult) -> str:
+    """兜底：模型挂了就用这个，保证方案能出得去。"""
     when = []
     for s in draft.slots:
         when.append(f"{s.start_min // 60:02d}:{s.start_min % 60:02d} 去 {s.place_name}")
+    if state.date:
+        head = f"那就定在 {state.date}："
+    else:
+        head = "具体哪天还没定，暂定这样："
 
     prices = [s.attrs.get(PRICE_KEY) for s in draft.slots]
     if all(p is not None for p in prices):
         per_person = sum(prices)
-        total = per_person * headcount
-        cost_part = f"。{headcount} 个人，人均约 {per_person} 元，总共 {total} 元左右。"
+        total = per_person * len(draft.participants)
+        tail = f"。{len(draft.participants)} 个人，人均约 {per_person} 元，总共 {total} 元左右。"
     else:
-        per_person = None
-        total = None
-        cost_part = f"。{headcount} 个人。"
+        tail = f"。{len(draft.participants)} 个人。"
 
-    message = f"那就定在 {state.date}：" + "，然后 ".join(when) + cost_part
+    message = head + "，然后 ".join(when) + tail
     if result.undecided:
         notes = "；".join(v.detail for v in result.undecided)
         message += f"（还没核实：{notes}）"
+    return message
 
+
+def to_final(
+    state: GroupState,
+    draft: FinalDraft,
+    result: VerificationResult,
+    express_fn: Callable[[GroupState, FinalDraft, VerificationResult], str] | None = None,
+) -> FinalPlan:
+    """措辞交给表达节点；它失败就用模板兜底，绝不让方案因为措辞出不去。"""
+    fallback = template_message(state, draft, result)
+    writer = express_fn or express
+    try:
+        message = writer(state, draft, result)
+    except (llm.LLMError, RuntimeError, ValidationError, KeyError):
+        message = fallback
+
+    facts = plan_facts(state, draft)
     return FinalPlan(
         status="ok",
         date=state.date,
         participants=draft.participants,
         slots=draft.slots,
-        total_cost=total,
+        total_cost=facts["total_cost"],
         message=message,
     )
 
 
-def candidates_by_id(state: GroupState) -> dict[str, Candidate]:
-    return {place.place_id: place for group in state.found.values() for place in group}
+def run(
+    chat: ChatLog,
+    understand_fn: Callable[[ChatLog], GroupState] | None = None,
+    plan_fn: Callable[[GroupState], PlannerDecision] | None = None,
+    express_fn: Callable[[GroupState, FinalDraft, VerificationResult], str] | None = None,
+) -> FinalPlan:
+    """三个节点默认都用真模型；测试可以各塞一个假的进来。"""
+    state = (understand_fn or understand)(chat)
+    decide = plan_fn or plan
 
-
-def run(chat: ChatLog) -> FinalPlan:
-    participants, constraints = understand(chat)
-    state = GroupState(
-        goal=chat.title,
-        date="2026-11-07",
-        participants=participants,
-        constraints=constraints,
-    )
-
-    for step in range(MAX_STEPS):
+    for _ in range(MAX_STEPS):
         if len(state.rejections) >= MAX_REJECTIONS:
             return FinalPlan(status="infeasible", message="试了几次都不满足条件")
 
-        decision = plan(state)
+        decision = decide(state)
 
-        if isinstance(decision, FinalDraft):
-            result = verify(state.constraints, decision, candidates_by_id(state))
+        if decision.kind == "give_up":
+            return FinalPlan(status="infeasible", message=decision.reason or "没有可行方案")
+
+        if decision.kind == "ask":
+            return FinalPlan(
+                status="needs_input",
+                message=decision.reason or "还差一点信息",
+                questions=decision.questions,
+            )
+
+        if decision.kind == "final":
+            result = verify(state.constraints, decision.draft, candidates_by_id(state))
             if result.passed:
-                return to_final(state, decision, result)
+                return to_final(state, decision.draft, result, express_fn)
             state.rejections.append(render_rejection(result))
             continue
 
-        observation = dispatch(decision)
+        observation = dispatch(decision.action)
         if not observation.ok:
             state.rejections.append(f"{observation.tool} 失败: {observation.error.kind}")
             continue
-        state.found[decision.arguments["kind"]] = observation.data
+        key = decision.action.arguments.get("kind") or decision.action.tool
+        state.found[key] = observation.data
 
     raise RuntimeError(f"超过 {MAX_STEPS} 步还没出方案")

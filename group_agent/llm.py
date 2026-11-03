@@ -25,6 +25,7 @@ class LLMResult:
     data: dict[str, Any]
     tokens: int
     ms: int
+    cached: int = 0
 
 
 def settings() -> tuple[str, str, str]:
@@ -41,9 +42,10 @@ def build_prompt(user: str, schema: dict) -> str:
     """把 schema 拼进提示词，让模型按格式填。"""
     schema_text = json.dumps(schema, ensure_ascii=False, indent=2)
     return (
-        f"{user}\n\n"
         "只输出一个 JSON 对象，不要解释、不要代码块。必须符合下面的 schema：\n"
-        f"{schema_text}"
+        f"{schema_text}\n\n"
+        "以下是输入：\n"
+        f"{user}"
     )
 
 
@@ -129,8 +131,12 @@ def complete_json(
             last_error = "模型返回的不是对象"
             continue
 
-        tokens = int(response.get("usage", {}).get("total_tokens", 0))
-        return LLMResult(data=data, tokens=tokens, ms=ms)
+        usage = response.get("usage", {})
+        tokens = int(usage.get("total_tokens", 0))
+        cached = int(usage.get("prompt_cache_hit_tokens", 0))
+        if not cached:
+            cached = int(usage.get("prompt_tokens_details", {}).get("cached_tokens", 0))
+        return LLMResult(data=data, tokens=tokens, ms=ms, cached=cached)
 
     raise LLMError(f"调了 {retries + 1} 次都失败：{last_error}")
 

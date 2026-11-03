@@ -1,6 +1,7 @@
 """校验：只跑纯函数，不调大模型。"""
 
 from .models import (
+    Activity,
     Availability,
     Budget,
     Candidate,
@@ -88,9 +89,25 @@ def check_availability(c: Availability, draft: FinalDraft, places: dict[str, Can
     return Verdict(constraint_id=c.id, ok=True)
 
 
+def check_activity(c: Activity, draft: FinalDraft, places: dict[str, Candidate]) -> Verdict:
+    """方案里必须出现的活动，缺一个就打回。"""
+    if not draft.slots:
+        return Verdict(constraint_id=c.id, ok=None, detail="还没有方案")
+    have = {s.activity for s in draft.slots}
+    missing = [w for w in c.want if w not in have]
+    if missing:
+        return Verdict(
+            constraint_id=c.id,
+            ok=False,
+            detail=f"方案里缺少 {missing}，现在只有 {sorted(have)}",
+        )
+    return Verdict(constraint_id=c.id, ok=True)
+
+
 CHECKERS = {
     "budget": check_budget,
     "diet": check_diet,
+    "activity": check_activity,
     "availability": check_availability,
 }
 

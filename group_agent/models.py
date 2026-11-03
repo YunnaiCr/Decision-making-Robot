@@ -14,7 +14,7 @@ class Severity(str, Enum):
 class ConstraintBase(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    id: str
+    id: str = ""
     severity: Severity
     who: list[str] = Field(default_factory=list)
     evidence: str
@@ -46,8 +46,14 @@ class Diet(ConstraintBase):
     avoid: list[str] = Field(min_length=1)
 
 
+class Activity(ConstraintBase):
+    """方案里必须出现的活动，匹配 Slot.activity。"""
+    kind: Literal["activity"] = "activity"
+    want: list[str] = Field(min_length=1)
+
+
 Constraint = Annotated[
-    Budget | Diet | Availability,
+    Budget | Diet | Availability | Activity,
     Field(discriminator="kind"),
 ]
 
@@ -125,6 +131,8 @@ class GroupState(BaseModel):
     participants: list[str] = Field(default_factory=list)
     constraints: list[Constraint] = Field(default_factory=list)
     found: dict[str, list[Candidate]] = Field(default_factory=dict)
+    unknowns: list[str] = Field(default_factory=list)
+    next_id: int = 1
     rejections: list[str] = Field(default_factory=list)
 
 
@@ -136,6 +144,7 @@ class FinalPlan(BaseModel):
     slots: list[Slot] = Field(default_factory=list)
     total_cost: int | None = None
     message: str = ""
+    questions: list[str] = Field(default_factory=list)
 
 class Message(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -153,3 +162,40 @@ class ChatLog(BaseModel):
     title: str = ""
     messages: list[Message] = Field(default_factory=list)
 
+
+class StateDelta(BaseModel):
+    """理解层的输出：这次消息让状态改变了什么。"""
+    model_config = ConfigDict(extra="forbid")
+
+    date: str | None = None
+    participants: list[str] = Field(default_factory=list)
+    add_constraints: list[Constraint] = Field(default_factory=list)
+    drop_constraints: list[str] = Field(default_factory=list)
+    unknowns: list[str] = Field(default_factory=list)
+
+
+class PlannerDecision(BaseModel):
+    """规划层的输出：下一步做什么。没理由的一律拒绝。"""
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["act", "final", "ask", "give_up"]
+    action: ActionRequest | None = None
+    draft: FinalDraft | None = None
+    questions: list[str] = Field(default_factory=list)
+    reason: str = ""
+
+    @model_validator(mode="after")
+    def _check_shape(self):
+        if self.kind == "act" and self.action is None:
+            raise ValueError("kind=act 必须给 action")
+        if self.kind == "final" and self.draft is None:
+            raise ValueError("kind=final 必须给 draft")
+        if self.kind == "ask" and not self.questions:
+            raise ValueError("kind=ask 必须给 questions")
+        return self
+
+
+
+class MessageOut(BaseModel):
+    """表达节点的输出：一句话，只允许改写，不许新增事实。"""
+    message: str = Field(min_length=1)
