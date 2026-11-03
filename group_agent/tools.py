@@ -1,4 +1,9 @@
-"""工具：目前全部读 fixtures，不联网。以后接真 API 只换这个文件内部。"""
+"""工具层：查店铺。
+
+约定
+- 外部世界的访问只走这里，别的模块不许直接读 fixtures。
+- 查不到返回 None，不猜也不造。
+"""
 
 import json
 from pathlib import Path
@@ -39,6 +44,7 @@ def get_place(place_id: str) -> Candidate | None:
     return None
 
 
+# 工具名 -> 函数。加一个工具就在这里注册。
 TOOLS = {
     "search_places": search_places,
     "get_place": get_place,

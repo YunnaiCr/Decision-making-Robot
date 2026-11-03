@@ -12,6 +12,7 @@ from .models import (
     Verdict,
 )
 
+# slot.attrs 里放每人费用的键名。
 PRICE_KEY = "cost_per_person"
 
 
@@ -104,6 +105,7 @@ def check_activity(c: Activity, draft: FinalDraft, places: dict[str, Candidate])
     return Verdict(constraint_id=c.id, ok=True)
 
 
+# 约束种类 -> 检查函数。加一种约束就在这里注册。
 CHECKERS = {
     "budget": check_budget,
     "diet": check_diet,

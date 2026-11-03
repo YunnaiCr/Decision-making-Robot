@@ -1,4 +1,9 @@
-"""主循环：理解、规划、表达三个节点都接真模型。"""
+"""主循环：编排理解、规划、表达三个节点。
+
+约定
+- 状态怎么变只发生在这里；节点函数不直接改 state。
+- 被打回的理由必须回灌给规划层，否则会重复同一方案。
+"""
 
 import json
 from typing import Callable
@@ -23,7 +28,9 @@ from .prompts import planning, understanding
 from .tools import dispatch
 from .verifier import PRICE_KEY, verify
 
+# 超过这么多步还没给出方案，就放弃。
 MAX_STEPS = 12
+# 方案被连续打回这么多次，判定为无解。
 MAX_REJECTIONS = 3
 
 
@@ -135,12 +142,14 @@ def plan(state: GroupState) -> PlannerDecision:
 
 
 def render_rejection(result: VerificationResult) -> str:
+    """把校验结果拼成一句话，回灌给规划层。"""
     parts = [v.detail for v in result.violations]
     parts += [v.detail for v in result.undecided]
     return "；".join(parts)
 
 
 def candidates_by_id(state: GroupState) -> dict[str, Candidate]:
+    """place_id 到店铺的索引，校验器查标签用。"""
     return {place.place_id: place for group in state.found.values() for place in group}
 
 

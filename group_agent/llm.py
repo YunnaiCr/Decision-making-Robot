@@ -22,6 +22,7 @@ class LLMError(RuntimeError):
 
 @dataclass
 class LLMResult:
+    """一次调用的产物：解析好的 dict、总 token、耗时、命中缓存的 token。"""
     data: dict[str, Any]
     tokens: int
     ms: int

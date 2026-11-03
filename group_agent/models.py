@@ -1,4 +1,10 @@
-"""所有跨节点的数据类型。只放定义，不放逻辑。"""
+"""所有跨节点的数据类型。只放定义，不放逻辑。
+
+约定
+- id 由程序分配（apply_delta 里），模型给的通常是空字符串。
+- 字段为 None 表示不知道，不表示没有。
+- Slot.attrs 里的键由各活动自己解释，骨架不认识它们。
+"""
 
 from enum import Enum
 from typing import Annotated, Any, Literal
@@ -7,11 +13,13 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class Severity(str, Enum):
+    """约束的硬度：hard 违反即否决，soft 只扣分。"""
     HARD = "hard"
     SOFT = "soft"
 
 
 class ConstraintBase(BaseModel):
+    """所有约束共有的四样：编号、硬度、涉及的人、原话。"""
     model_config = ConfigDict(extra="forbid")
 
     id: str = ""
@@ -21,6 +29,7 @@ class ConstraintBase(BaseModel):
 
 
 class Budget(ConstraintBase):
+    """预算上限：人均或总价，至少要给一个。"""
     kind: Literal["budget"] = "budget"
     total_max: int | None = Field(default=None, ge=0)
     per_person_max: int | None = Field(default=None, ge=0)
@@ -59,18 +68,21 @@ Constraint = Annotated[
 
 
 class ErrorInfo(BaseModel):
+    """工具失败的类型；retryable 决定要不要重试。"""
     kind: Literal["bad_args", "not_found", "upstream", "timeout", "rate_limit", "internal"]
     message: str
     retryable: bool = False
 
 
 class ActionRequest(BaseModel):
+    """规划给执行的动作：调哪个工具、参数是什么。"""
     tool: str
     arguments: dict[str, Any] = Field(default_factory=dict)
     why: str = ""
 
 
 class Observation(BaseModel):
+    """工具执行的结果：成不成，以及拿回来的数据。"""
     ok: bool
     tool: str
     data: Any | None = None
@@ -78,7 +90,7 @@ class Observation(BaseModel):
 
 
 class Slot(BaseModel):
-    """一个活动。attrs 装这个活动自己的属性（钱、游戏名等），骨架不认识它们。"""
+    """一个活动：时间 + 类型 + 地点。"""
     start_min: int = Field(ge=0, le=1440)
     end_min: int = Field(ge=0, le=1440)
     activity: str
@@ -88,7 +100,7 @@ class Slot(BaseModel):
 
 
 class FinalDraft(BaseModel):
-    """规划给出的方案提案。注意没有 status：能不能通过由校验器说。"""
+    """规划给出的方案提案，能不能通过由校验器说。"""
     date: str | None = None
     participants: list[str] = Field(default_factory=list)
     slots: list[Slot] = Field(default_factory=list)
@@ -102,13 +114,14 @@ class Verdict(BaseModel):
 
 
 class VerificationResult(BaseModel):
+    """一次校验的汇总：过了没、拦了谁、哪些没法判。"""
     passed: bool
     violations: list[Verdict] = Field(default_factory=list)
     undecided: list[Verdict] = Field(default_factory=list)
 
 
 class Candidate(BaseModel):
-    """工具查回来的一家店。字段为 None 表示不知道，不是没有。"""
+    """工具查回来的一家店。"""
     model_config = ConfigDict(extra="forbid")
 
     place_id: str = Field(pattern=r"^p\d{3}$")
@@ -125,7 +138,7 @@ class Candidate(BaseModel):
 
 
 class GroupState(BaseModel):
-    """主循环里共享的状态。目前只有预算约束，后面会变厚。"""
+    """主循环共享的状态：约束、查到的店、被打回的原因、还没搞清的事。"""
     goal: str = ""
     date: str | None = None
     participants: list[str] = Field(default_factory=list)
@@ -147,6 +160,7 @@ class FinalPlan(BaseModel):
     questions: list[str] = Field(default_factory=list)
 
 class Message(BaseModel):
+    """聊天里的一条消息。"""
     model_config = ConfigDict(extra="forbid")
 
     i: int = Field(ge=1)
@@ -156,6 +170,7 @@ class Message(BaseModel):
 
 
 class ChatLog(BaseModel):
+    """一整段聊天记录，理解层的输入。"""
     model_config = ConfigDict(extra="forbid")
 
     chat_id: str
