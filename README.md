@@ -24,13 +24,24 @@ cp .env.example .env
 .venv/bin/python -m group_agent fixtures/chats/e01.json
 ```
 
-输出是一段 JSON，主要字段：
+输出是一段 JSON，两块：
+
+**`plan`** —— 活动方案
 
 - `status`：`ok` 有方案 / `needs_input` 需要补充信息 / `infeasible` 做不到
 - `slots`：时间、活动、地点、每人费用
 - `total_cost`：总花费，查不到价格时为 `null`
 - `message`：可以直接发到群里的话
 - `questions`：`needs_input` 时具体要问什么
+
+**`minutes`** —— 纪要和待办
+
+- `participants`：实际参加的人
+- `decisions`：已经拍板的事
+- `open_questions`：还没定、要有人回答的事
+- `todos`：谁、做什么、截止（没说就 `null`）、原话依据
+
+`minutes` 生成失败时是 `null`，`plan` 照常输出，错误信息走 stderr。
 
 ## 测试
 

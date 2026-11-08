@@ -94,6 +94,20 @@ verifier.py
 
 结果有三种，不是两种：**是 / 否 / 无法判定**。查不到数据时只能说"不知道"，不能猜——猜出来的"通过"比"不知道"危险得多。
 
+## 纪要和待办放在哪
+
+纪要不是方案的输入，也不该受主循环那 12 步约束。它是在方案算完之后，
+拿**同一份聊天 + 同一份状态**再问模型一次得到的，所以刻意放在循环外面：
+
+```text
+understand(chat) ──► GroupState ──┬──► run() ──► FinalPlan ──┐
+                                  │                          ├──► 入口拼成一个 JSON
+                                  └──► write_minutes() ──► Minutes
+```
+
+三条边界：它不写回 `GroupState`、不参与校验、失败不影响方案（入口会把 `minutes`
+降级成 `null` 并往 stderr 打一行）。类型定义在 `minutes.py`，`models.py` 的契约不变。
+
 ## 契约
 
 这几样东西跨模块流动，改动要全员知会。
@@ -139,10 +153,12 @@ group_agent/
 ├── tools.py         工具：只读 fixtures，四类错误分开
 ├── verifier.py      校验：纯函数，不调模型
 ├── orchestrator.py  主循环：编排三个节点
-├── prompts/         三份提示词
+├── minutes.py       纪要：策划完之后再问一次模型，不进循环
+├── prompts/         四份提示词
 │   ├── understanding.py
 │   ├── planning.py
-│   └── express.py
+│   ├── express.py
+│   └── minutes.py
 └── __main__.py      入口
 
 fixtures/            假数据：5 家店 + e01 聊天记录
