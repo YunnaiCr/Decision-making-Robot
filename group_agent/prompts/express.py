@@ -2,8 +2,7 @@
 
 除了提示词，这里还有一个纯函数 `lint_message`：
 模型写的话对不对，不该靠再问一遍模型（见 ARCHITECTURE 第 3 条），能用代码查的就用代码查。
-它现在只给测试和 scripts/eval_language.py 用；接进 orchestrator.express() 需要动主循环，
-见 LANGUAGE.md「要动主轴的事」。
+它现在只给测试和 scripts/eval_language.py 用；接进 orchestrator.express() 需要动主循环。
 """
 
 import json

@@ -84,7 +84,7 @@ def test_understanding_examples_leave_ids_to_the_program():
 
 
 def test_example_dates_are_iso_or_null():
-    """date 只收 YYYY-MM-DD 或 null。「周六」这种相对日期填不了就留 null。见 LANGUAGE.md §6.7。"""
+    """date 只收 YYYY-MM-DD 或 null。「周六」这种相对日期填不了就留 null。"""
     for ex in understanding.EXAMPLES:
         date = ex["delta"]["date"]
         assert date is None or re.fullmatch(r"\d{4}-\d{2}-\d{2}", date), date
