@@ -136,7 +136,7 @@ unknowns                       新增的未知项
 group_agent/
 ├── models.py        所有类型，唯一的契约来源
 ├── llm.py           唯一的模型出口：拼提示词、重试、记 token
-├── tools.py         工具：只读 fixtures，三类错误分开
+├── tools.py         工具：只读 fixtures，四类错误分开
 ├── verifier.py      校验：纯函数，不调模型
 ├── orchestrator.py  主循环：编排三个节点
 ├── prompts/         三份提示词
@@ -146,8 +146,9 @@ group_agent/
 └── __main__.py      入口
 
 fixtures/            假数据：5 家店 + e01 聊天记录
-tests/               22 个测试，全部离线
+tests/               测试，全部离线
 scripts/check_llm.py 换 key / 换模型后自检
+scripts/check_tools.py 改完工具后自检
 ```
 
 ## 加东西的时候
@@ -155,7 +156,7 @@ scripts/check_llm.py 换 key / 换模型后自检
 | 想加什么 | 动哪里 |
 |---|---|
 | 一种新约束 | `models.py` 加类 → 联合类型加一项 → `verifier.py` 写检查器并注册 |
-| 一个新工具 | `tools.py` 写函数 → 注册进 `TOOLS` |
+| 一个新工具 | `tools.py` 写函数 → 注册进 `TOOLS` → 加一条 `ToolSpec`（提示词自动带上）；返回值必须是 `list[Candidate]` |
 | 改提示词 | 只动 `prompts/`，不碰循环 |
 | 改循环的出口 | `orchestrator.run()` |
 

@@ -40,6 +40,16 @@ cp .env.example .env
 
 测试不联网，不需要 key。注意要用 `python -m pytest`，不是直接 `pytest`。
 
+## 检查工具
+
+工具层同样不联网、不需要 key。改完 `group_agent/tools.py` 跑一次：
+
+```bash
+.venv/bin/python scripts/check_tools.py
+```
+
+每个工具都会真调一遍，正常和失败的路径都过，最后一行是 `10/10 通过`。
+
 ## 检查模型连通性
 
 换 key、换模型之后跑一次：
