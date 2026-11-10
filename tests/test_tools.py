@@ -21,10 +21,15 @@ from group_agent.tools import (
     TOOLS,
     TOOL_SPECS,
     ToolError,
+    alternatives,
     describe_tools,
     dispatch,
+    filter_places,
     get_place,
     load_places,
+    load_travel,
+    nearby_places,
+    rank_places,
     search_places,
 )
 from group_agent.verifier import PRICE_KEY
@@ -32,6 +37,17 @@ from group_agent.verifier import PRICE_KEY
 
 def ids(places: list[Candidate]) -> list[str]:
     return [place.place_id for place in places]
+
+
+# 每个工具一份能跑通的参数，下面几个“全量”测试都用它。
+CALLS: dict[str, dict] = {
+    "search_places": {"kind": "board_game"},
+    "get_place": {"place_id": "p001"},
+    "filter_places": {"place_ids": ["p001", "p002"], "max_price": 40},
+    "rank_places": {"place_ids": ["p001", "p003"], "by": "price"},
+    "alternatives": {"place_id": "p001"},
+    "nearby_places": {"from_place_id": "p001", "max_travel_min": 10},
+}
 
 
 # --- search_places -------------------------------------------------------
@@ -64,6 +80,12 @@ def test_max_distance_and_max_noise():
     assert ids(search_places("restaurant", max_noise="low")) == ["p003"]
 
 
+def test_min_score_and_private_room():
+    assert ids(search_places("board_game", min_score=4.5)) == ["p001"]
+    # p003 的 has_private_room 是 None，缺数据不算满足。
+    assert ids(search_places("restaurant", need_private_room=True)) == ["p004", "p005"]
+
+
 def test_empty_result_is_not_an_error():
     observation = dispatch(ActionRequest(tool="search_places", arguments={"kind": "restaurant", "max_price": 1}))
     assert observation.ok is True
@@ -78,6 +100,7 @@ def test_empty_result_is_not_an_error():
         {"kind": "board_game", "open_to": 900},
         {"kind": "board_game", "open_from": 900, "open_to": 600},
         {"kind": "board_game", "max_noise": "quiet"},
+        {"kind": "board_game", "min_score": 9},
     ],
 )
 def test_bad_search_arguments(arguments):
@@ -100,6 +123,100 @@ def test_get_place_miss_is_empty_not_an_error():
     observation = dispatch(ActionRequest(tool="get_place", arguments={"place_id": "p999"}))
     assert observation.ok is True
     assert observation.data == []
+
+
+# --- filter_places -------------------------------------------------------
+
+
+def test_filter_places_keeps_input_order():
+    assert ids(filter_places(["p003", "p001"], max_price=50)) == ["p003", "p001"]
+    assert ids(filter_places(["p003", "p001"], max_price=40)) == ["p003"]
+
+
+def test_filter_places_can_answer_is_it_open():
+    # 空列表本身就是答案：这个时段不营业。
+    assert ids(filter_places(["p003"], open_from=1260, open_to=1290)) == []
+    assert ids(filter_places(["p003"], open_from=1200, open_to=1260)) == ["p003"]
+
+
+def test_filter_places_rejects_unknown_id():
+    observation = dispatch(
+        ActionRequest(tool="filter_places", arguments={"place_ids": ["p001", "p999"]})
+    )
+    assert observation.ok is False
+    assert observation.error.kind == "not_found"
+
+
+def test_filter_places_dedupes():
+    assert ids(filter_places(["p001", "p001"])) == ["p001"]
+
+
+# --- rank_places ---------------------------------------------------------
+
+
+def test_rank_places_by_price():
+    assert ids(rank_places(["p001", "p002", "p003"], by="price")) == ["p002", "p003", "p001"]
+
+
+def test_rank_places_by_score_is_descending():
+    assert ids(rank_places(["p002", "p001", "p003"], by="score")) == ["p001", "p003", "p002"]
+
+
+def test_rank_places_by_noise():
+    # low(0) 在前，mid(1)，high(2)
+    assert ids(rank_places(["p004", "p003", "p005"], by="noise")) == ["p003", "p005", "p004"]
+
+
+def test_rank_places_bad_key():
+    with pytest.raises(ToolError) as caught:
+        rank_places(["p001"], by="vibe")
+    assert caught.value.kind == "bad_args"
+
+
+# --- alternatives --------------------------------------------------------
+
+
+def test_alternatives_excludes_origin_and_stays_in_kind():
+    assert ids(alternatives("p001")) == ["p002"]
+    assert ids(alternatives("p003")) == ["p004", "p005"]
+
+
+def test_alternatives_applies_filters():
+    assert ids(alternatives("p003", avoid_tags=["hotpot"])) == ["p005"]
+
+
+def test_alternatives_unknown_origin():
+    observation = dispatch(ActionRequest(tool="alternatives", arguments={"place_id": "p999"}))
+    assert observation.ok is False
+    assert observation.error.kind == "not_found"
+
+
+# --- nearby_places -------------------------------------------------------
+
+
+def test_nearby_places_sorts_by_travel_time():
+    # p001 出发：p003 8、p004 13、p005 15、p002 30
+    assert ids(nearby_places("p001", max_travel_min=15)) == ["p003", "p004", "p005"]
+
+
+def test_nearby_places_can_filter_by_kind():
+    assert ids(nearby_places("p001", kind="board_game", max_travel_min=30)) == ["p002"]
+
+
+def test_nearby_places_unknown_origin():
+    observation = dispatch(
+        ActionRequest(tool="nearby_places", arguments={"from_place_id": "p999"})
+    )
+    assert observation.ok is False
+    assert observation.error.kind == "not_found"
+
+
+def test_travel_fixture_covers_every_pair():
+    places = load_places()
+    table = load_travel()
+    for i, here in enumerate(places):
+        for there in places[i + 1:]:
+            assert (here.place_id, there.place_id) in table
 
 
 # --- dispatch / 注册表 ----------------------------------------------------
@@ -161,22 +278,28 @@ def test_describe_tools_matches_real_signatures():
                 assert f"{name}={param.default!r}" in text
 
 
-# --- 工具结果必须能被初版主循环吞下去 -------------------------------------
+# --- 形状契约：初版主循环只吞 list[Candidate] ----------------------------
 
 
-def test_loop_survives_get_place():
-    """工具只回 list[Candidate]，所以 models/orchestrator 不用动。
+@pytest.mark.parametrize("tool", sorted(CALLS))
+def test_every_tool_returns_a_candidate_list(tool):
+    observation = dispatch(ActionRequest(tool=tool, arguments=CALLS[tool]))
+    assert observation.ok is True, observation.error
+    assert isinstance(observation.data, list)
+    assert all(isinstance(place, Candidate) for place in observation.data)
 
-    以前 get_place 返回单个 Candidate，塞进 found 之后校验阶段会崩。
-    """
-    seen: list[GroupState] = []
+
+@pytest.mark.parametrize("tool", sorted(CALLS))
+def test_loop_survives_every_tool(tool):
+    """不改 models/orchestrator 的前提：任何工具的结果都要能进 found 并走完校验。"""
+    steps: list[int] = []
 
     def fake_plan(state: GroupState) -> PlannerDecision:
-        seen.append(state)
-        if "get_place" not in state.found:
+        steps.append(1)
+        if len(steps) == 1:
             return PlannerDecision(
                 kind="act",
-                action=ActionRequest(tool="get_place", arguments={"place_id": "p001"}),
+                action=ActionRequest(tool=tool, arguments=CALLS[tool]),
             )
         return PlannerDecision(
             kind="final",
@@ -203,12 +326,4 @@ def test_loop_survives_get_place():
     )
 
     assert plan.status == "ok"
-    assert isinstance(seen[-1].found["get_place"], list)
-    assert ids(seen[-1].found["get_place"]) == ["p001"]
-
-
-def test_every_tool_returns_a_list():
-    """形状是这个层的契约：不是列表，初版主循环就会在校验阶段炸。"""
-    assert len(load_places()) == 5
-    assert isinstance(search_places("board_game"), list)
-    assert isinstance(get_place("p001"), list)
+    assert len(steps) == 2

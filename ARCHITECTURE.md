@@ -108,6 +108,24 @@ understand(chat) ──► GroupState ──┬──► run() ──► FinalPl
 三条边界：它不写回 `GroupState`、不参与校验、失败不影响方案（入口会把 `minutes`
 降级成 `null` 并往 stderr 打一行）。类型定义在 `minutes.py`，`models.py` 的契约不变。
 
+## 工具
+
+工具层只回答“店”的问题，并且一律返回 `list[Candidate]`——主循环的 `found`
+只存这个形状，返回别的东西会在校验阶段炸。
+
+| 工具 | 回答什么 |
+|---|---|
+| `search_places` | 符合条件的店有哪些（类型 + 价格/营业/忌口/距离/噪音/评分/包间） |
+| `get_place` | 这家店的完整资料 |
+| `filter_places` | 已查到的名单里，谁还满足条件 |
+| `rank_places` | 这批店按便宜 / 好评 / 近 / 安静怎么排 |
+| `alternatives` | 这家不行，同类型还有谁 |
+| `nearby_places` | 从这家出发，路上 N 分钟内能到谁 |
+
+“是 / 否”这类问题也用列表表达：`filter_places([id], open_from=…)` 返回空，
+就说明那个时段不营业。**`Candidate` 里没被 `format_state` 打印出来的字段**
+（噪音、评分、距离、有没有包间）只能靠这些过滤参数问到，规划层看不到原始值。
+
 ## 契约
 
 这几样东西跨模块流动，改动要全员知会。
@@ -161,7 +179,7 @@ group_agent/
 │   └── minutes.py
 └── __main__.py      入口
 
-fixtures/            假数据：5 家店 + e01 聊天记录
+fixtures/            假数据：5 家店、店与店之间的路上时间、e01 聊天记录
 tests/               测试，全部离线
 scripts/check_llm.py 换 key / 换模型后自检
 scripts/check_tools.py 改完工具后自检
