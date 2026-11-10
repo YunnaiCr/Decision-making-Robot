@@ -110,17 +110,18 @@ understand(chat) ──► GroupState ──┬──► run() ──► FinalPl
 
 ## 工具
 
-工具层只回答“店”的问题，并且一律返回 `list[Candidate]`——主循环的 `found`
-只存这个形状，返回别的东西会在校验阶段炸。
+工具层只回答“选项”的问题，并且一律返回 `list[Candidate]`——主循环的 `found`
+只存这个形状，返回别的东西会在校验阶段炸。词用“选项”而不是“店”，是因为
+接口不写死品类：`kind` 可以省略，标签、排除名单都由调用方给。
 
 | 工具 | 回答什么 |
 |---|---|
-| `search_places` | 符合条件的店有哪些（类型 + 价格/营业/忌口/距离/噪音/评分/包间） |
-| `get_place` | 这家店的完整资料 |
-| `filter_places` | 已查到的名单里，谁还满足条件 |
-| `rank_places` | 这批店按便宜 / 好评 / 近 / 安静怎么排 |
-| `alternatives` | 这家不行，同类型还有谁 |
-| `nearby_places` | 从这家出发，路上 N 分钟内能到谁 |
+| `search_options` | 符合条件的选项有哪些（品类可省略 + 正向标签/忌口/排除名单/价格/营业/距离/噪音/评分/包间） |
+| `get_option` | 这个选项的完整资料 |
+| `filter_options` | 已查到的名单里，谁还满足条件 |
+| `rank_options` | 这批选项按便宜 / 好评 / 近 / 安静怎么排 |
+| `alternatives` | 这个不行，同品类还有谁 |
+| `nearby_options` | 从这家出发，路上 N 分钟内能到谁 |
 
 “是 / 否”这类问题也用列表表达：`filter_places([id], open_from=…)` 返回空，
 就说明那个时段不营业。**`Candidate` 里没被 `format_state` 打印出来的字段**

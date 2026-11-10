@@ -24,70 +24,87 @@ from group_agent.tools import (
     alternatives,
     describe_tools,
     dispatch,
-    filter_places,
-    get_place,
+    filter_options,
+    get_option,
     load_places,
     load_travel,
-    nearby_places,
-    rank_places,
-    search_places,
+    nearby_options,
+    rank_options,
+    search_options,
 )
 from group_agent.verifier import PRICE_KEY
 
 
-def ids(places: list[Candidate]) -> list[str]:
-    return [place.place_id for place in places]
+def ids(options: list[Candidate]) -> list[str]:
+    return [option.place_id for option in options]
 
 
 # 每个工具一份能跑通的参数，下面几个“全量”测试都用它。
 CALLS: dict[str, dict] = {
-    "search_places": {"kind": "board_game"},
-    "get_place": {"place_id": "p001"},
-    "filter_places": {"place_ids": ["p001", "p002"], "max_price": 40},
-    "rank_places": {"place_ids": ["p001", "p003"], "by": "price"},
-    "alternatives": {"place_id": "p001"},
-    "nearby_places": {"from_place_id": "p001", "max_travel_min": 10},
+    "search_options": {"kind": "board_game"},
+    "get_option": {"option_id": "p001"},
+    "filter_options": {"option_ids": ["p001", "p002"], "max_price": 40},
+    "rank_options": {"option_ids": ["p001", "p003"], "by": "price"},
+    "alternatives": {"option_id": "p001"},
+    "nearby_options": {"from_option_id": "p001", "max_travel_min": 10},
 }
 
 
-# --- search_places -------------------------------------------------------
+# --- search_options ------------------------------------------------------
 
 
 def test_search_by_kind():
-    assert ids(search_places("board_game")) == ["p001", "p002"]
-    assert ids(search_places("restaurant")) == ["p003", "p004", "p005"]
+    assert ids(search_options("board_game")) == ["p001", "p002"]
+    assert ids(search_options("restaurant")) == ["p003", "p004", "p005"]
+
+
+def test_search_without_kind_looks_at_everything():
+    assert len(search_options()) == 5
+
+
+def test_positive_tags_match_any():
+    assert ids(search_options(tags=["hotpot"])) == ["p004"]
+    assert ids(search_options(tags=["noodle", "chinese"])) == ["p003", "p005"]
+
+
+def test_exclude_ids_skips_known_and_unknown():
+    assert ids(search_options("restaurant", exclude_ids=["p004"])) == ["p003", "p005"]
+    # 不认识的编号直接跳过，不报错：它可能来自更早一轮的状态。
+    assert ids(search_options("restaurant", exclude_ids=["p999"])) == ["p003", "p004", "p005"]
 
 
 def test_price_limit_is_inclusive():
     # p001 正好 45，边界应该算通过。
-    assert ids(search_places("board_game", max_price=45)) == ["p001", "p002"]
-    assert ids(search_places("restaurant", max_price=38)) == ["p003"]
+    assert ids(search_options("board_game", max_price=45)) == ["p001", "p002"]
+    assert ids(search_options("restaurant", max_price=38)) == ["p003"]
 
 
 def test_open_window_must_be_covered_whole():
     # 阿婆面馆 21:00 关门，排到 21:30 就不行。
-    assert ids(search_places("restaurant", open_from=1260, open_to=1290)) == ["p004", "p005"]
+    assert ids(search_options("restaurant", open_from=1260, open_to=1290)) == ["p004", "p005"]
     # 只给 open_from 时按“那一刻”算。
-    assert ids(search_places("restaurant", open_from=1300)) == ["p004"]
+    assert ids(search_options("restaurant", open_from=1300)) == ["p004"]
 
 
 def test_avoid_tags_excludes_hotpot():
-    assert ids(search_places("restaurant", avoid_tags=["hotpot"])) == ["p003", "p005"]
+    assert ids(search_options("restaurant", avoid_tags=["hotpot"])) == ["p003", "p005"]
 
 
 def test_max_distance_and_max_noise():
-    assert ids(search_places("board_game", max_distance=20)) == ["p001"]
-    assert ids(search_places("restaurant", max_noise="low")) == ["p003"]
+    assert ids(search_options("board_game", max_distance=20)) == ["p001"]
+    assert ids(search_options("restaurant", max_noise="low")) == ["p003"]
 
 
 def test_min_score_and_private_room():
-    assert ids(search_places("board_game", min_score=4.5)) == ["p001"]
+    assert ids(search_options("board_game", min_score=4.5)) == ["p001"]
     # p003 的 has_private_room 是 None，缺数据不算满足。
-    assert ids(search_places("restaurant", need_private_room=True)) == ["p004", "p005"]
+    assert ids(search_options("restaurant", need_private_room=True)) == ["p004", "p005"]
 
 
 def test_empty_result_is_not_an_error():
-    observation = dispatch(ActionRequest(tool="search_places", arguments={"kind": "restaurant", "max_price": 1}))
+    observation = dispatch(
+        ActionRequest(tool="search_options", arguments={"kind": "restaurant", "max_price": 1})
+    )
     assert observation.ok is True
     assert observation.data == []
 
@@ -105,71 +122,75 @@ def test_empty_result_is_not_an_error():
 )
 def test_bad_search_arguments(arguments):
     with pytest.raises(ToolError) as caught:
-        search_places(**arguments)
+        search_options(**arguments)
     assert caught.value.kind == "bad_args"
 
 
-# --- get_place -----------------------------------------------------------
+# --- get_option ----------------------------------------------------------
 
 
-def test_get_place_returns_zero_or_one():
-    hit = get_place("p003")
+def test_get_option_returns_zero_or_one():
+    hit = get_option("p003")
     assert ids(hit) == ["p003"]
     assert hit[0].name == "阿婆面馆"
-    assert get_place("p999") == []
+    assert get_option("p999") == []
 
 
-def test_get_place_miss_is_empty_not_an_error():
-    observation = dispatch(ActionRequest(tool="get_place", arguments={"place_id": "p999"}))
+def test_get_option_miss_is_empty_not_an_error():
+    observation = dispatch(ActionRequest(tool="get_option", arguments={"option_id": "p999"}))
     assert observation.ok is True
     assert observation.data == []
 
 
-# --- filter_places -------------------------------------------------------
+# --- filter_options ------------------------------------------------------
 
 
-def test_filter_places_keeps_input_order():
-    assert ids(filter_places(["p003", "p001"], max_price=50)) == ["p003", "p001"]
-    assert ids(filter_places(["p003", "p001"], max_price=40)) == ["p003"]
+def test_filter_options_keeps_input_order():
+    assert ids(filter_options(["p003", "p001"], max_price=50)) == ["p003", "p001"]
+    assert ids(filter_options(["p003", "p001"], max_price=40)) == ["p003"]
 
 
-def test_filter_places_can_answer_is_it_open():
-    # 空列表本身就是答案：这个时段不营业。
-    assert ids(filter_places(["p003"], open_from=1260, open_to=1290)) == []
-    assert ids(filter_places(["p003"], open_from=1200, open_to=1260)) == ["p003"]
+def test_filter_options_by_tag():
+    assert ids(filter_options(["p003", "p004"], tags=["hotpot"])) == ["p004"]
 
 
-def test_filter_places_rejects_unknown_id():
+def test_filter_options_can_answer_is_it_open():
+    # 空列表本身就是答案：这个时段不合适。
+    assert ids(filter_options(["p003"], open_from=1260, open_to=1290)) == []
+    assert ids(filter_options(["p003"], open_from=1200, open_to=1260)) == ["p003"]
+
+
+def test_filter_options_rejects_unknown_id():
     observation = dispatch(
-        ActionRequest(tool="filter_places", arguments={"place_ids": ["p001", "p999"]})
+        ActionRequest(tool="filter_options", arguments={"option_ids": ["p001", "p999"]})
     )
     assert observation.ok is False
     assert observation.error.kind == "not_found"
 
 
-def test_filter_places_dedupes():
-    assert ids(filter_places(["p001", "p001"])) == ["p001"]
+def test_filter_options_dedupes():
+    assert ids(filter_options(["p001", "p001"])) == ["p001"]
 
 
-# --- rank_places ---------------------------------------------------------
+# --- rank_options --------------------------------------------------------
 
 
-def test_rank_places_by_price():
-    assert ids(rank_places(["p001", "p002", "p003"], by="price")) == ["p002", "p003", "p001"]
+def test_rank_options_by_price():
+    assert ids(rank_options(["p001", "p002", "p003"], by="price")) == ["p002", "p003", "p001"]
 
 
-def test_rank_places_by_score_is_descending():
-    assert ids(rank_places(["p002", "p001", "p003"], by="score")) == ["p001", "p003", "p002"]
+def test_rank_options_by_score_is_descending():
+    assert ids(rank_options(["p002", "p001", "p003"], by="score")) == ["p001", "p003", "p002"]
 
 
-def test_rank_places_by_noise():
+def test_rank_options_by_noise():
     # low(0) 在前，mid(1)，high(2)
-    assert ids(rank_places(["p004", "p003", "p005"], by="noise")) == ["p003", "p005", "p004"]
+    assert ids(rank_options(["p004", "p003", "p005"], by="noise")) == ["p003", "p005", "p004"]
 
 
-def test_rank_places_bad_key():
+def test_rank_options_bad_key():
     with pytest.raises(ToolError) as caught:
-        rank_places(["p001"], by="vibe")
+        rank_options(["p001"], by="vibe")
     assert caught.value.kind == "bad_args"
 
 
@@ -186,26 +207,26 @@ def test_alternatives_applies_filters():
 
 
 def test_alternatives_unknown_origin():
-    observation = dispatch(ActionRequest(tool="alternatives", arguments={"place_id": "p999"}))
+    observation = dispatch(ActionRequest(tool="alternatives", arguments={"option_id": "p999"}))
     assert observation.ok is False
     assert observation.error.kind == "not_found"
 
 
-# --- nearby_places -------------------------------------------------------
+# --- nearby_options ------------------------------------------------------
 
 
-def test_nearby_places_sorts_by_travel_time():
+def test_nearby_options_sorts_by_travel_time():
     # p001 出发：p003 8、p004 13、p005 15、p002 30
-    assert ids(nearby_places("p001", max_travel_min=15)) == ["p003", "p004", "p005"]
+    assert ids(nearby_options("p001", max_travel_min=15)) == ["p003", "p004", "p005"]
 
 
-def test_nearby_places_can_filter_by_kind():
-    assert ids(nearby_places("p001", kind="board_game", max_travel_min=30)) == ["p002"]
+def test_nearby_options_can_filter_by_kind():
+    assert ids(nearby_options("p001", kind="board_game", max_travel_min=30)) == ["p002"]
 
 
-def test_nearby_places_unknown_origin():
+def test_nearby_options_unknown_origin():
     observation = dispatch(
-        ActionRequest(tool="nearby_places", arguments={"from_place_id": "p999"})
+        ActionRequest(tool="nearby_options", arguments={"from_option_id": "p999"})
     )
     assert observation.ok is False
     assert observation.error.kind == "not_found"
@@ -229,7 +250,7 @@ def test_unknown_tool_is_bad_args():
 
 
 def test_wrong_argument_name_is_bad_args():
-    observation = dispatch(ActionRequest(tool="search_places", arguments={"type": "board_game"}))
+    observation = dispatch(ActionRequest(tool="search_options", arguments={"type": "board_game"}))
     assert observation.ok is False
     assert observation.error.kind == "bad_args"
     assert "参数不对" in observation.error.message
@@ -286,7 +307,7 @@ def test_every_tool_returns_a_candidate_list(tool):
     observation = dispatch(ActionRequest(tool=tool, arguments=CALLS[tool]))
     assert observation.ok is True, observation.error
     assert isinstance(observation.data, list)
-    assert all(isinstance(place, Candidate) for place in observation.data)
+    assert all(isinstance(option, Candidate) for option in observation.data)
 
 
 @pytest.mark.parametrize("tool", sorted(CALLS))

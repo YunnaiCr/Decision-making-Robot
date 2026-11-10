@@ -97,7 +97,7 @@ def test_availability_ignores_absent_person():
 
 
 def test_wrong_argument_name_is_bad_args():
-    observation = dispatch(ActionRequest(tool="search_places", arguments={"type": "board_game"}))
+    observation = dispatch(ActionRequest(tool="search_options", arguments={"type": "board_game"}))
     assert observation.ok is False
     assert observation.error.kind == "bad_args"
 
@@ -143,10 +143,10 @@ def fake_understanding(chat: ChatLog) -> GroupState:
 def fake_plan(state: GroupState) -> PlannerDecision:
     if "board_game" not in state.found:
         return PlannerDecision(kind="act", action=ActionRequest(
-            tool="search_places", arguments={"kind": "board_game"}))
+            tool="search_options", arguments={"kind": "board_game"}))
     if "restaurant" not in state.found:
         return PlannerDecision(kind="act", action=ActionRequest(
-            tool="search_places", arguments={"kind": "restaurant"}))
+            tool="search_options", arguments={"kind": "restaurant"}))
 
     board = state.found["board_game"][0]
     dinner = state.found["restaurant"][0]

@@ -1,12 +1,16 @@
-"""工具层：查店铺、筛名单、排顺序、换一家、看附近。
+"""工具层：查选项、筛名单、排顺序、换一家、看附近。
+
+“选项”是这里的通用词：今天它落在店铺上（`Candidate`），因为数据模型只有
+`board_game` / `restaurant` 两类。工具接口不写死“吃饭”，品类、正向标签、
+排除名单都交给调用方，换一类数据时不用改函数签名。
 
 约定
 - 外部世界的访问只走这里，别的模块不许直接读 fixtures。
 - 参数不合法抛 ToolError，由 dispatch 统一转成 Observation。
 - 查不到返回空列表，不猜也不造。
-- 每个工具都返回 list[Candidate]：主循环只把店铺列表写进 found，
+- 每个工具都返回 list[Candidate]：主循环只把这种列表写进 found，
   返回别的形状会在校验阶段炸，所以形状由这一层保证。
-  需要“是/否”类答案时用空列表和非空列表表达：filter_places([id], open_from=...)
+  需要“是/否”类答案时用空列表和非空列表表达：filter_options([id], open_from=...)
   返回空，就说明那个时段不营业。
 - 加一个工具：写函数 -> 加进 TOOLS -> 加一条 ToolSpec。提示词会自动跟着变。
 """
@@ -26,8 +30,8 @@ FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 # 噪音从低到高，max_noise 和 by="noise" 都用它比较。
 _NOISE_RANK = {"low": 0, "mid": 1, "high": 2}
 
-# 世界里目前只有这两类店。加类型要同时改 models.Candidate。
-PLACE_KINDS = ("board_game", "restaurant")
+# 数据模型目前只认这两类。kind 可以不给（跨品类查），给了就必须是其中之一。
+KINDS = ("board_game", "restaurant")
 
 _places: list[Candidate] | None = None
 _travel: dict[tuple[str, str], int] | None = None
@@ -54,11 +58,12 @@ class ToolSpec:
 
 @dataclass(frozen=True)
 class Filters:
-    """一组店铺过滤条件。四个查询类工具共用同一份判定，行为才不会各说各话。"""
+    """一组选项过滤条件。四个查询类工具共用同一份判定，行为才不会各说各话。"""
 
     max_price: int | None = None
     open_from: int | None = None
     open_to: int | None = None
+    tags: tuple[str, ...] = ()
     avoid_tags: tuple[str, ...] = ()
     max_distance: int | None = None
     max_noise: str | None = None
@@ -76,12 +81,12 @@ def load_places() -> list[Candidate]:
 
 
 def places_by_id() -> dict[str, Candidate]:
-    """place_id 到店的索引。"""
+    """编号到选项的索引。"""
     return {place.place_id: place for place in load_places()}
 
 
 def load_travel() -> dict[tuple[str, str], int]:
-    """读店与店之间的路上时间，双向对称。文件里只写一对，两向都建索引。"""
+    """读选项之间的路上时间，双向对称。文件里只写一对，两向都建索引。"""
     global _travel
     if _travel is None:
         raw = json.loads((FIXTURES / "travel.json").read_text(encoding="utf-8"))
@@ -108,17 +113,23 @@ def _window(open_from: int | None, open_to: int | None) -> tuple[int | None, int
     return open_from, end
 
 
+def _clean_tags(tags: list[str] | None) -> tuple[str, ...]:
+    """标签统一小写去空白，顺序稳定，方便比较。"""
+    return tuple(sorted({tag.strip().lower() for tag in (tags or []) if tag.strip()}))
+
+
 def _collect(
     max_price: int | None = None,
     open_from: int | None = None,
     open_to: int | None = None,
+    tags: list[str] | None = None,
     avoid_tags: list[str] | None = None,
     max_distance: int | None = None,
     max_noise: str | None = None,
     min_score: float | None = None,
     need_private_room: bool = False,
 ) -> Filters:
-    """校验筛选参数并收成一个 Filters。四个查询工具都从这里进。"""
+    """校验筛选参数并收成一个 Filters。所有查询工具都从这里进。"""
     if max_price is not None and max_price < 0:
         raise ToolError("bad_args", "max_price 不能是负数")
     if max_noise is not None and max_noise not in _NOISE_RANK:
@@ -127,12 +138,12 @@ def _collect(
         raise ToolError("bad_args", "min_score 必须在 0-5 之间")
 
     start, end = _window(open_from, open_to)
-    avoid = tuple(sorted({tag.strip().lower() for tag in (avoid_tags or []) if tag.strip()}))
     return Filters(
         max_price=max_price,
         open_from=start,
         open_to=end,
-        avoid_tags=avoid,
+        tags=_clean_tags(tags),
+        avoid_tags=_clean_tags(avoid_tags),
         max_distance=max_distance,
         max_noise=max_noise,
         min_score=min_score,
@@ -140,41 +151,55 @@ def _collect(
     )
 
 
-def _match(place: Candidate, filters: Filters) -> bool:
-    """一家店是否满足这组条件。缺数据一律算不满足，不猜。"""
-    if filters.max_price is not None and place.price_per_person > filters.max_price:
+def _match(option: Candidate, filters: Filters) -> bool:
+    """一个选项是否满足这组条件。缺数据一律算不满足，不猜。"""
+    if filters.max_price is not None and option.price_per_person > filters.max_price:
         return False
     if filters.open_from is not None and (
-        place.open_min > filters.open_from or place.close_min < filters.open_to
+        option.open_min > filters.open_from or option.close_min < filters.open_to
     ):
         return False
-    if filters.avoid_tags and set(filters.avoid_tags) & {tag.lower() for tag in place.tags}:
+
+    option_tags = {tag.lower() for tag in option.tags}
+    # 正向标签：命中任意一个就算；没写就是不限。
+    if filters.tags and not set(filters.tags) & option_tags:
         return False
+    if filters.avoid_tags and set(filters.avoid_tags) & option_tags:
+        return False
+
     if filters.max_distance is not None:
-        if place.distance_min is None or place.distance_min > filters.max_distance:
+        if option.distance_min is None or option.distance_min > filters.max_distance:
             return False
     if filters.max_noise is not None:
-        if place.noise is None or _NOISE_RANK[place.noise] > _NOISE_RANK[filters.max_noise]:
+        if option.noise is None or _NOISE_RANK[option.noise] > _NOISE_RANK[filters.max_noise]:
             return False
     if filters.min_score is not None:
-        if place.score is None or place.score < filters.min_score:
+        if option.score is None or option.score < filters.min_score:
             return False
-    if filters.need_private_room and place.has_private_room is not True:
+    if filters.need_private_room and option.has_private_room is not True:
         return False
     return True
 
 
-def _pick(place_ids: list[str]) -> list[Candidate]:
-    """按 id 取店，保持传入顺序，重复的只留一次。有不认识的 id 就报错。"""
+def _pick(option_ids: list[str]) -> list[Candidate]:
+    """按编号取选项，保持传入顺序，重复的只留一次。有不认识的编号就报错。"""
     index = places_by_id()
-    missing = [place_id for place_id in place_ids if place_id not in index]
+    missing = [option_id for option_id in option_ids if option_id not in index]
     if missing:
-        raise ToolError("not_found", f"没有这些店: {missing}")
-    return [index[place_id] for place_id in dict.fromkeys(place_ids)]
+        raise ToolError("not_found", f"没有这些选项: {missing}")
+    return [index[option_id] for option_id in dict.fromkeys(option_ids)]
 
 
-def search_places(
-    kind: str,
+def _check_kind(kind: str | None) -> None:
+    """品类可以不给（跨品类查），给了就必须是认识的。"""
+    if kind is not None and kind not in KINDS:
+        raise ToolError("bad_args", f"kind 只能是 {' / '.join(KINDS)} 或省略，收到 {kind!r}")
+
+
+def search_options(
+    kind: str | None = None,
+    tags: list[str] | None = None,
+    exclude_ids: list[str] | None = None,
     max_price: int | None = None,
     open_from: int | None = None,
     open_to: int | None = None,
@@ -184,23 +209,39 @@ def search_places(
     min_score: float | None = None,
     need_private_room: bool = False,
 ) -> list[Candidate]:
-    """按类型查店，再按价格/营业时段/忌口/距离/噪音/评分/包间过滤。查不到返回空列表。"""
-    if kind not in PLACE_KINDS:
-        raise ToolError("bad_args", f"kind 只能是 {' / '.join(PLACE_KINDS)}，收到 {kind!r}")
+    """按条件找选项。不给 kind 就是跨品类查，返回空列表表示没有符合条件的。"""
+    _check_kind(kind)
     filters = _collect(
-        max_price, open_from, open_to, avoid_tags, max_distance, max_noise, min_score, need_private_room
+        max_price=max_price,
+        open_from=open_from,
+        open_to=open_to,
+        tags=tags,
+        avoid_tags=avoid_tags,
+        max_distance=max_distance,
+        max_noise=max_noise,
+        min_score=min_score,
+        need_private_room=need_private_room,
     )
-    return [place for place in load_places() if place.kind == kind and _match(place, filters)]
+    # 排除名单里不认识的编号直接跳过：它可能来自更早一轮的状态。
+    skip = set(exclude_ids or [])
+    return [
+        option
+        for option in load_places()
+        if (kind is None or option.kind == kind)
+        and option.place_id not in skip
+        and _match(option, filters)
+    ]
 
 
-def get_place(place_id: str) -> list[Candidate]:
-    """按编号取一家店的完整资料，返回 0 或 1 项。"""
-    place = places_by_id().get(place_id)
-    return [place] if place is not None else []
+def get_option(option_id: str) -> list[Candidate]:
+    """按编号取一个选项的完整资料，返回 0 或 1 项。"""
+    option = places_by_id().get(option_id)
+    return [option] if option is not None else []
 
 
-def filter_places(
-    place_ids: list[str],
+def filter_options(
+    option_ids: list[str],
+    tags: list[str] | None = None,
     max_price: int | None = None,
     open_from: int | None = None,
     open_to: int | None = None,
@@ -210,36 +251,45 @@ def filter_places(
     min_score: float | None = None,
     need_private_room: bool = False,
 ) -> list[Candidate]:
-    """在给定名单里再筛一遍，顺序不变。用来判断“这家那个点还开着吗”。"""
+    """在给定名单里再筛一遍，顺序不变。用来判断“这个选项那个点还合适吗”。"""
     filters = _collect(
-        max_price, open_from, open_to, avoid_tags, max_distance, max_noise, min_score, need_private_room
+        max_price=max_price,
+        open_from=open_from,
+        open_to=open_to,
+        tags=tags,
+        avoid_tags=avoid_tags,
+        max_distance=max_distance,
+        max_noise=max_noise,
+        min_score=min_score,
+        need_private_room=need_private_room,
     )
-    return [place for place in _pick(place_ids) if _match(place, filters)]
+    return [option for option in _pick(option_ids) if _match(option, filters)]
 
 
 _RANKERS: dict[str, tuple[Callable[[Candidate], Any], bool]] = {
-    "price": (lambda place: place.price_per_person, False),
-    "score": (lambda place: place.score, True),
-    "distance": (lambda place: place.distance_min, False),
-    "noise": (lambda place: None if place.noise is None else _NOISE_RANK[place.noise], False),
+    "price": (lambda option: option.price_per_person, False),
+    "score": (lambda option: option.score, True),
+    "distance": (lambda option: option.distance_min, False),
+    "noise": (lambda option: None if option.noise is None else _NOISE_RANK[option.noise], False),
 }
 
 
-def rank_places(place_ids: list[str], by: str = "price") -> list[Candidate]:
-    """给一批店排序：price 便宜在前、score 高在前、distance 近在前、noise 安静在前。缺数据排最后。"""
+def rank_options(option_ids: list[str], by: str = "price") -> list[Candidate]:
+    """给一批选项排序：price 便宜在前、score 好在前、distance 近在前、noise 安静在前。缺数据排最后。"""
     if by not in _RANKERS:
         raise ToolError("bad_args", f"by 只能是 {' / '.join(_RANKERS)}，收到 {by!r}")
 
     key, reverse = _RANKERS[by]
-    places = _pick(place_ids)
-    known = [place for place in places if key(place) is not None]
-    unknown = [place for place in places if key(place) is None]
+    options = _pick(option_ids)
+    known = [option for option in options if key(option) is not None]
+    unknown = [option for option in options if key(option) is None]
     known.sort(key=key, reverse=reverse)
     return known + unknown
 
 
 def alternatives(
-    place_id: str,
+    option_id: str,
+    tags: list[str] | None = None,
     max_price: int | None = None,
     open_from: int | None = None,
     open_to: int | None = None,
@@ -249,24 +299,33 @@ def alternatives(
     min_score: float | None = None,
     need_private_room: bool = False,
 ) -> list[Candidate]:
-    """同类型的其他店，排除这一家。被否掉之后用它换店。"""
-    origin = places_by_id().get(place_id)
+    """同品类的其他选项，排除这一个。被否掉之后用它换一个。"""
+    origin = places_by_id().get(option_id)
     if origin is None:
-        raise ToolError("not_found", f"没有这个店: {place_id}")
+        raise ToolError("not_found", f"没有这个选项: {option_id}")
     filters = _collect(
-        max_price, open_from, open_to, avoid_tags, max_distance, max_noise, min_score, need_private_room
+        max_price=max_price,
+        open_from=open_from,
+        open_to=open_to,
+        tags=tags,
+        avoid_tags=avoid_tags,
+        max_distance=max_distance,
+        max_noise=max_noise,
+        min_score=min_score,
+        need_private_room=need_private_room,
     )
     return [
-        place
-        for place in load_places()
-        if place.kind == origin.kind and place.place_id != place_id and _match(place, filters)
+        option
+        for option in load_places()
+        if option.kind == origin.kind and option.place_id != option_id and _match(option, filters)
     ]
 
 
-def nearby_places(
-    from_place_id: str,
+def nearby_options(
+    from_option_id: str,
     kind: str | None = None,
     max_travel_min: int = 30,
+    tags: list[str] | None = None,
     max_price: int | None = None,
     open_from: int | None = None,
     open_to: int | None = None,
@@ -275,57 +334,64 @@ def nearby_places(
     min_score: float | None = None,
     need_private_room: bool = False,
 ) -> list[Candidate]:
-    """从某家店出发、路上不超过 max_travel_min 分钟的店，按远近排序。"""
-    if from_place_id not in places_by_id():
-        raise ToolError("not_found", f"没有这个店: {from_place_id}")
-    if kind is not None and kind not in PLACE_KINDS:
-        raise ToolError("bad_args", f"kind 只能是 {' / '.join(PLACE_KINDS)}，收到 {kind!r}")
+    """从某个选项出发、路上不超过 max_travel_min 分钟的选项，按远近排序。"""
+    if from_option_id not in places_by_id():
+        raise ToolError("not_found", f"没有这个选项: {from_option_id}")
+    _check_kind(kind)
     if max_travel_min < 0:
         raise ToolError("bad_args", "max_travel_min 不能是负数")
 
     filters = _collect(
-        max_price, open_from, open_to, avoid_tags, None, max_noise, min_score, need_private_room
+        max_price=max_price,
+        open_from=open_from,
+        open_to=open_to,
+        tags=tags,
+        avoid_tags=avoid_tags,
+        max_distance=None,
+        max_noise=max_noise,
+        min_score=min_score,
+        need_private_room=need_private_room,
     )
     table = load_travel()
     reachable: list[tuple[int, Candidate]] = []
-    for place in load_places():
-        if place.place_id == from_place_id:
+    for option in load_places():
+        if option.place_id == from_option_id:
             continue
-        if kind is not None and place.kind != kind:
+        if kind is not None and option.kind != kind:
             continue
-        minutes = table.get((from_place_id, place.place_id))
+        minutes = table.get((from_option_id, option.place_id))
         if minutes is None or minutes > max_travel_min:
             continue
-        if not _match(place, filters):
+        if not _match(option, filters):
             continue
-        reachable.append((minutes, place))
+        reachable.append((minutes, option))
 
     reachable.sort(key=lambda pair: pair[0])
-    return [place for minutes, place in reachable]
+    return [option for minutes, option in reachable]
 
 
 # 工具名 -> 函数。加一个工具就在这里注册。
 TOOLS = {
-    "search_places": search_places,
-    "get_place": get_place,
-    "filter_places": filter_places,
-    "rank_places": rank_places,
+    "search_options": search_options,
+    "get_option": get_option,
+    "filter_options": filter_options,
+    "rank_options": rank_options,
     "alternatives": alternatives,
-    "nearby_places": nearby_places,
+    "nearby_options": nearby_options,
 }
 
 # 工具的对外说明，顺序就是提示词里的顺序。
 TOOL_SPECS = [
     ToolSpec(
-        "search_places",
-        "按类型查店，再按价格/营业/忌口/距离/噪音/评分/包间过滤，查不到给空列表",
+        "search_options",
+        "按条件找选项：品类可省略，可给正向标签、忌口标签、排除名单，再叠加价格/营业/距离/噪音/评分/包间",
         "list[Candidate]",
     ),
-    ToolSpec("get_place", "按编号取一家店的完整资料，查不到给空列表", "list[Candidate]（0 或 1 项）"),
-    ToolSpec("filter_places", "在已查到的名单里再筛一遍，返回空列表就是都不满足", "list[Candidate]"),
-    ToolSpec("rank_places", "给一批店排序：price 便宜、score 好评、distance 近、noise 安静在前", "list[Candidate]"),
-    ToolSpec("alternatives", "同类型的其他店，排除这一家，被否掉时换店", "list[Candidate]"),
-    ToolSpec("nearby_places", "从某家店出发、路上不超过 max_travel_min 分钟的店，按远近排序", "list[Candidate]"),
+    ToolSpec("get_option", "按编号取一个选项的完整资料，查不到给空列表", "list[Candidate]（0 或 1 项）"),
+    ToolSpec("filter_options", "在已查到的名单里再筛一遍，返回空列表就是都不满足", "list[Candidate]"),
+    ToolSpec("rank_options", "给一批选项排序：price 便宜、score 好、distance 近、noise 安静在前", "list[Candidate]"),
+    ToolSpec("alternatives", "同品类的其他选项，排除这一个，被否掉时换一个", "list[Candidate]"),
+    ToolSpec("nearby_options", "从某个选项出发、路上不超过 max_travel_min 分钟的选项，按远近排序", "list[Candidate]"),
 ]
 
 
