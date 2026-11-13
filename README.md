@@ -16,13 +16,31 @@ uv pip install --python .venv/bin/python pydantic pytest
 cp .env.example .env
 ```
 
-在 `.env` 里填 `LLM_API_KEY`，其余项可以留空。
+在 `.env` 里填 `LLM_API_KEY`，其余项可以留空。要连外部数据源（高德）再填 `AMAP_KEY`。
 
 ## 运行
 
 ```bash
 .venv/bin/python -m group_agent fixtures/chats/e01.json
 ```
+
+也支持直接喂 QQ 导出的 txt：
+
+```bash
+.venv/bin/python -m group_agent ~/Downloads/群聊记录.txt
+```
+
+## 从 QQ 导入聊天记录
+
+QQ **没有公开的聊天记录接口**，现实里只有两条路：
+
+1. **导出文件**（推荐）：QQ 消息管理器 → 右键群 → 导出消息记录 → 选 `.txt`。
+   本项目直接解析这个格式，离线、不登录、不碰账号。
+2. **机器人框架**：NapCat / LLOneBot 这类，走 OneBot 协议拿实时消息。
+   要常驻进程、要账号，还有封号风险，本项目不做。
+
+导出文件常见是 GBK，导入时会自动尝试 UTF-8 和 GB18030。跨天的记录只保留消息最多的那一天，
+因为 `Message.min` 只有 0–1440 分钟。
 
 输出是一段 JSON，两块：
 
@@ -60,6 +78,19 @@ cp .env.example .env
 ```
 
 每个工具都会真调一遍，正常和失败的路径都过，最后一行是 `25/25 通过`。
+
+## 外部数据源（可选）
+
+配了 `AMAP_KEY` 之后多两个工具：
+
+- `search_remote(keyword, city)`：去高德查真实地点。返回的候选**没有营业时间**，价格也常缺，
+  和 fixtures 里的本地数据不是一回事
+- `weather(city)`：城市实时天气
+
+没配 key 时它们返回 `unavailable`，**不会静默降级成假数据**。测试全部用假 transport，不联网。
+
+接别的平台就照着 `group_agent/sources.py` 里的函数写一个，解析成 `Candidate` 或 dict，
+再到 `tools.py` 注册。注意大多数平台没有公开 API，接之前先看服务条款。
 
 ## 检查模型连通性
 

@@ -69,7 +69,7 @@ Constraint = Annotated[
 
 class ErrorInfo(BaseModel):
     """工具失败的类型；retryable 决定要不要重试。"""
-    kind: Literal["bad_args", "not_found", "upstream", "timeout", "rate_limit", "internal"]
+    kind: Literal["bad_args", "not_found", "upstream", "timeout", "rate_limit", "internal", "unavailable"]
     message: str
     retryable: bool = False
 
@@ -179,6 +179,7 @@ class ChatLog(BaseModel):
 
     chat_id: str
     title: str = ""
+    date: str | None = None
     messages: list[Message] = Field(default_factory=list)
 
 

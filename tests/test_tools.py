@@ -335,6 +335,28 @@ def test_describe_tools_matches_real_signatures():
                 assert f"{name}={param.default!r}" in text
 
 
+def test_remote_tools_go_through_dispatch_when_patched(monkeypatch):
+    """真接口要 key，这里把 sources 换成假的，验证工具的接线和形状。"""
+    from group_agent import sources
+
+    monkeypatch.setattr(sources, "amap_weather", lambda city: {"city": city, "weather": "晴"})
+    monkeypatch.setattr(
+        sources,
+        "amap_places",
+        lambda keyword, city, limit=5: [
+            Candidate(place_id="amap-x1", name="测试影院", category="movie", tags=["movie"])
+        ],
+    )
+
+    weather_obs = dispatch(ActionRequest(tool="weather", arguments={"city": "北京"}))
+    assert weather_obs.ok is True
+    assert weather_obs.data["weather"] == "晴"
+
+    remote_obs = dispatch(ActionRequest(tool="search_remote", arguments={"keyword": "影院", "city": "北京"}))
+    assert remote_obs.ok is True
+    assert ids(remote_obs.data) == ["amap-x1"]
+
+
 # --- 形状契约 + 主循环兼容 ------------------------------------------------
 
 

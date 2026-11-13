@@ -23,6 +23,7 @@ from typing import Any, Callable
 
 from pydantic import ValidationError
 
+from . import sources
 from .models import ActionRequest, Candidate, ErrorInfo, Observation
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
@@ -407,6 +408,22 @@ def catalog() -> dict[str, Any]:
     }
 
 
+def weather(city: str, date: str | None = None) -> dict[str, Any]:
+    """查城市的实时天气（高德）。date 先留着，现在不区分预报日期。"""
+    try:
+        return sources.amap_weather(city)
+    except sources.SourceError as exc:
+        raise ToolError(exc.kind, exc.message) from exc
+
+
+def search_remote(keyword: str, city: str, limit: int = 5) -> list[Candidate]:
+    """去高德查真实地点。返回的候选没有营业时间，价格也可能缺，所以别当成本地数据。"""
+    try:
+        return sources.amap_places(keyword, city, limit=limit)
+    except sources.SourceError as exc:
+        raise ToolError(exc.kind, exc.message) from exc
+
+
 # 工具名 -> 函数。加一个工具就在这里注册。
 TOOLS = {
     "catalog": catalog,
@@ -419,6 +436,8 @@ TOOLS = {
     "check_open": check_open,
     "travel_time": travel_time,
     "estimate_cost": estimate_cost,
+    "search_remote": search_remote,
+    "weather": weather,
 }
 
 # 工具的对外说明，顺序就是提示词里的顺序。
@@ -449,6 +468,12 @@ TOOL_SPECS = [
         "几个候选的人均价合计与按人数算的总价，缺价的进 missing",
         "{per_person, total, missing}",
     ),
+    ToolSpec(
+        "search_remote",
+        "去高德查真实地点（需要 AMAP_KEY）。结果没有营业时间、价格可能缺，和本地数据不是一回事",
+        "list[Candidate]",
+    ),
+    ToolSpec("weather", "查城市实时天气（需要 AMAP_KEY）", "{weather, temperature, wind, humidity}"),
 ]
 
 

@@ -143,7 +143,7 @@ def apply_delta(state: GroupState, delta: StateDelta) -> GroupState:
 def understand(chat: ChatLog) -> GroupState:
     """真理解：抽成增量，应用到空状态上。"""
     delta = extract(chat)
-    return apply_delta(GroupState(goal=chat.title), delta)
+    return apply_delta(GroupState(goal=chat.title, date=chat.date), delta)
 
 
 def plan(state: GroupState) -> PlannerDecision:

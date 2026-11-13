@@ -131,6 +131,8 @@ understand(chat) ──► GroupState ──┬──► run() ──► FinalPl
 | `check_open` | 某个候选在指定时段能不能用（不知道就说 `null`，不猜） |
 | `travel_time` | 两者之间路上几分钟 |
 | `estimate_cost` | 几个人、几个候选，人均和总价各是多少 |
+| `search_remote` | 去高德查真实地点（要 `AMAP_KEY`；没有营业时间，价格常缺） |
+| `weather` | 城市实时天气（要 `AMAP_KEY`） |
 
 属性过滤走 `attrs` 键值，别为每个品类加专用参数：`attrs={"noise": "low"}`、
 `attrs={"private_room": true}`。加一个新品类不需要改任何工具代码。
@@ -179,6 +181,8 @@ group_agent/
 ├── models.py        所有类型，唯一的契约来源
 ├── llm.py           唯一的模型出口：拼提示词、重试、记 token
 ├── tools.py         工具：候选类返列表、事实类返字典，四类错误分开
+├── ingest.py        导入聊天记录：QQ 导出的 txt / 自己的 JSON
+├── sources.py       外部数据源：高德天气和地点，没 key 就说不可用
 ├── verifier.py      校验：纯函数，不调模型
 ├── orchestrator.py  主循环：编排三个节点，并决定结果进 found 还是 facts
 ├── minutes.py       纪要：策划完之后再问一次模型，不进循环
