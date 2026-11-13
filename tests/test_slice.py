@@ -143,10 +143,10 @@ def fake_understanding(chat: ChatLog) -> GroupState:
 def fake_plan(state: GroupState) -> PlannerDecision:
     if "board_game" not in state.found:
         return PlannerDecision(kind="act", action=ActionRequest(
-            tool="search_options", arguments={"kind": "board_game"}))
+            tool="search_options", arguments={"category": "board_game"}))
     if "restaurant" not in state.found:
         return PlannerDecision(kind="act", action=ActionRequest(
-            tool="search_options", arguments={"kind": "restaurant"}))
+            tool="search_options", arguments={"category": "restaurant"}))
 
     board = state.found["board_game"][0]
     dinner = state.found["restaurant"][0]

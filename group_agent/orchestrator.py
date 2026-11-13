@@ -6,12 +6,13 @@
 """
 
 import json
-from typing import Callable
+from typing import Any, Callable
 
 from pydantic import ValidationError
 
 from . import llm
 from .models import (
+    ActionRequest,
     Candidate,
     ChatLog,
     Constraint,
@@ -40,6 +41,24 @@ def format_chat(chat: ChatLog) -> str:
     return "聊天记录：" + chr(10) + chr(10).join(lines)
 
 
+def describe_candidate(option: Candidate) -> str:
+    """一个候选摊成一行。规划层能看到的候选信息就是这里印出来的这些。"""
+    parts = [option.place_id, option.name, f"[{option.category}]"]
+    if option.price_per_person is not None:
+        parts.append(f"人均{option.price_per_person}")
+    if option.open_min is not None and option.close_min is not None:
+        parts.append(f"可用{option.open_min}-{option.close_min}")
+    if option.distance_min is not None:
+        parts.append(f"距离{option.distance_min}分")
+    if option.score is not None:
+        parts.append(f"评分{option.score}")
+    if option.tags:
+        parts.append("tags=" + json.dumps(option.tags, ensure_ascii=False))
+    if option.attrs:
+        parts.append("attrs=" + json.dumps(option.attrs, ensure_ascii=False))
+    return " ".join(parts)
+
+
 def format_state(state: GroupState) -> str:
     """把状态摊成文字。这是规划层能看到的全部信息。"""
     lines: list[str] = []
@@ -57,16 +76,18 @@ def format_state(state: GroupState) -> str:
     else:
         lines.append("  （无）")
 
-    lines.append("已经查到的店：")
+    lines.append("已经查到的候选：")
     if state.found:
-        for places in state.found.values():
-            for p in places:
-                lines.append(
-                    f"  {p.place_id} {p.name} 人均{p.price_per_person} "
-                    f"tags={p.tags} 营业{p.open_min}-{p.close_min}"
-                )
+        for group in state.found.values():
+            for option in group:
+                lines.append("  " + describe_candidate(option))
     else:
         lines.append("  （还没查）")
+
+    if state.facts:
+        lines.append("查到的其他信息（不是候选，但排方案时要用）：")
+        for key, value in state.facts.items():
+            lines.append(f"  - {key} -> {json.dumps(value, ensure_ascii=False)}")
 
     if state.rejections:
         lines.append("被打回过的原因（不要重复同样的方案）：")
@@ -149,8 +170,29 @@ def render_rejection(result: VerificationResult) -> str:
 
 
 def candidates_by_id(state: GroupState) -> dict[str, Candidate]:
-    """place_id 到店铺的索引，校验器查标签用。"""
-    return {place.place_id: place for group in state.found.values() for place in group}
+    """place_id 到候选的索引，校验器查标签用。"""
+    return {
+        option.place_id: option
+        for group in state.found.values()
+        if isinstance(group, list)
+        for option in group
+    }
+
+
+def remember(state: GroupState, action: ActionRequest, data: Any) -> None:
+    """工具结果写回状态：候选进 found，其他事实进 facts。
+
+    规划层下一轮只看得到状态，不写回就等于白查。
+    """
+    if isinstance(data, Candidate):
+        data = [data]
+    if isinstance(data, list) and all(isinstance(item, Candidate) for item in data):
+        key = action.arguments.get("category") or action.tool
+        state.found[key] = data
+        return
+
+    args = json.dumps(action.arguments, ensure_ascii=False, sort_keys=True)
+    state.facts[f"{action.tool} {args}".strip()] = data
 
 
 def plan_facts(state: GroupState, draft: FinalDraft) -> dict:
@@ -272,9 +314,10 @@ def run(
 
         observation = dispatch(decision.action)
         if not observation.ok:
-            state.rejections.append(f"{observation.tool} 失败: {observation.error.kind}")
+            state.rejections.append(
+                f"{observation.tool} 失败({observation.error.kind})：{observation.error.message}"
+            )
             continue
-        key = decision.action.arguments.get("kind") or decision.action.tool
-        state.found[key] = observation.data
+        remember(state, decision.action, observation.data)
 
     raise RuntimeError(f"超过 {MAX_STEPS} 步还没出方案")

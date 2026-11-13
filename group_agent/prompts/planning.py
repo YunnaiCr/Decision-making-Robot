@@ -16,16 +16,19 @@ _TEMPLATE = """
    arguments 里的参数名必须和上面完全一致；不认识的工具不要编。
 3. final：给出完整方案。draft 必须包含 date / participants / slots。
    每个 slot：start_min / end_min / activity / place_id / place_name / attrs。
-   attrs 里如果这家店有人均价，写 cost_per_person 这个键；不知道就不要写。
-   排时间之前，先确认这家店在那个时段营业；两个紧邻的 slot 之间留出赶路的时间。
+   attrs 里如果这个候选有人均价，写 cost_per_person 这个键；不知道就不要写。
+   排时间之前，先确认这个候选在那个时段可用；两个紧邻的 slot 之间留出赶路的时间。
 4. ask：信息不足，问用户。questions 里写具体的问题。
 5. give_up：确实无解。reason 要说清哪几条约束无法同时满足。
 6. 必须满足所有硬约束：预算、时间窗、忌口。软约束尽量满足。
 7. 参考被打回的原因：被打回过的方案不要原样再来一遍。
 8. 不要用同样的参数重复调用同一个工具。
-9. 状态里已经列出的店不要再查。
+9. 状态里已经列出的候选不要再查。
 10. 每个 activity 约束都必须在方案里兑现：want 里有 dinner，方案里就必须有一个
     activity=dinner 的 slot；缺了会被打回。
+11. category 不是固定清单，是自由文字。不确定这个世界有什么，先调 catalog 看一眼，
+    再按它给出的 category / tags / attrs 去 search_options。
+12. 品类独有的条件走 attrs 键值（例如 attrs={"noise": "low"}），不要自己发明参数名。
 """
 
 RULES = _TEMPLATE.replace("{tools}", describe_tools())

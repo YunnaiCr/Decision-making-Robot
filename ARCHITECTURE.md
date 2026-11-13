@@ -38,7 +38,7 @@ understand() ──① StateDelta──┐
 ```text
 ① StateDelta   改约束、参与者、未知项
 ② rejections   记下"为什么被打回"或"工具为什么失败"
-③ found        把查到的店存进去
+③ found/facts  把查到的候选、查到的事实存进去
 ```
 
 **三个都写进 `GroupState`，所以下一轮 `plan()` 看得到。** 唯一不存的是 `plan()` 自己给出的决定——它每轮重新产生，不留历史。
@@ -51,7 +51,7 @@ understand() ──① StateDelta──┐
 |---|---|---|
 | 理解 → 状态 | `StateDelta` | **会**：应用后改变约束、参与者、未知项 |
 | 规划 → 执行 | `ActionRequest` | 请求本身不存；它的结果见下一行 |
-| 执行 → 状态 | `Observation` | **会**：`data` 进 `found`，`error` 进 `rejections` |
+| 执行 → 状态 | `Observation` | **会**：`list[Candidate]` 进 `found`，其他结果进 `facts`；`error` 进 `rejections` |
 | 规划 → 校验 | `FinalDraft` | 不会 |
 | 校验 → 规划 | `VerificationResult` | **会一半**：转成一句话进 `rejections`，对象本身不存 |
 | 校验 → 表达 | `FinalDraft` + 算好的数 | 不会 |
@@ -110,22 +110,30 @@ understand(chat) ──► GroupState ──┬──► run() ──► FinalPl
 
 ## 工具
 
-工具层只回答“选项”的问题，并且一律返回 `list[Candidate]`——主循环的 `found`
-只存这个形状，返回别的东西会在校验阶段炸。词用“选项”而不是“店”，是因为
-接口不写死品类：`kind` 可以省略，标签、排除名单都由调用方给。
+工具分两类，形状不同：
+
+- **候选类** → `list[Candidate]` → 进 `GroupState.found`
+- **事实类** → `dict` → 进 `GroupState.facts`
+
+“候选”是通用词：一家店、一张票、一个场地，任何能排进方案的东西。
+`Candidate.category` 是自由字符串，不做枚举——世界上的事没法穷举；
+品类独有的属性放 `Candidate.attrs`，所以加一类新东西只需要加数据。
 
 | 工具 | 回答什么 |
 |---|---|
-| `search_options` | 符合条件的选项有哪些（品类可省略 + 正向标签/忌口/排除名单/价格/营业/距离/噪音/评分/包间） |
-| `get_option` | 这个选项的完整资料 |
+| `catalog` | 这个世界里有什么：品类计数、标签、属性的键和取值 |
+| `search_options` | 符合条件的候选（品类可省略 + 标签/忌口/属性/价格/时间窗/距离/评分/排除名单） |
+| `get_option` | 这个候选的完整资料 |
 | `filter_options` | 已查到的名单里，谁还满足条件 |
-| `rank_options` | 这批选项按便宜 / 好评 / 近 / 安静怎么排 |
+| `rank_options` | 这批候选按便宜 / 好评 / 近怎么排 |
 | `alternatives` | 这个不行，同品类还有谁 |
-| `nearby_options` | 从这家出发，路上 N 分钟内能到谁 |
+| `nearby_options` | 从这里出发，路上 N 分钟内能到谁 |
+| `check_open` | 某个候选在指定时段能不能用（不知道就说 `null`，不猜） |
+| `travel_time` | 两者之间路上几分钟 |
+| `estimate_cost` | 几个人、几个候选，人均和总价各是多少 |
 
-“是 / 否”这类问题也用列表表达：`filter_places([id], open_from=…)` 返回空，
-就说明那个时段不营业。**`Candidate` 里没被 `format_state` 打印出来的字段**
-（噪音、评分、距离、有没有包间）只能靠这些过滤参数问到，规划层看不到原始值。
+属性过滤走 `attrs` 键值，别为每个品类加专用参数：`attrs={"noise": "low"}`、
+`attrs={"private_room": true}`。加一个新品类不需要改任何工具代码。
 
 ## 契约
 
@@ -136,7 +144,8 @@ understand(chat) ──► GroupState ──┬──► run() ──► FinalPl
 ```text
 goal / date / participants     目标、日期、参与者
 constraints                    约束列表（四种 kind）
-found                          kind -> 查到的店
+found                          key -> 查到的候选
+facts                          工具查到的其他事实（路程、营业判断、预算试算）
 rejections                     被打回的原因，会回灌给规划层
 unknowns                       还没搞清的事
 next_id                        下一个约束编号
@@ -169,9 +178,9 @@ unknowns                       新增的未知项
 group_agent/
 ├── models.py        所有类型，唯一的契约来源
 ├── llm.py           唯一的模型出口：拼提示词、重试、记 token
-├── tools.py         工具：只读 fixtures，四类错误分开
+├── tools.py         工具：候选类返列表、事实类返字典，四类错误分开
 ├── verifier.py      校验：纯函数，不调模型
-├── orchestrator.py  主循环：编排三个节点
+├── orchestrator.py  主循环：编排三个节点，并决定结果进 found 还是 facts
 ├── minutes.py       纪要：策划完之后再问一次模型，不进循环
 ├── prompts/         四份提示词
 │   ├── understanding.py
@@ -180,7 +189,7 @@ group_agent/
 │   └── minutes.py
 └── __main__.py      入口
 
-fixtures/            假数据：5 家店、店与店之间的路上时间、e01 聊天记录
+fixtures/            假数据：7 个候选（桌游/餐厅/影院/公园）、路上时间、e01 聊天记录
 tests/               测试，全部离线
 scripts/check_llm.py 换 key / 换模型后自检
 scripts/check_tools.py 改完工具后自检
@@ -191,7 +200,8 @@ scripts/check_tools.py 改完工具后自检
 | 想加什么 | 动哪里 |
 |---|---|
 | 一种新约束 | `models.py` 加类 → 联合类型加一项 → `verifier.py` 写检查器并注册 |
-| 一个新工具 | `tools.py` 写函数 → 注册进 `TOOLS` → 加一条 `ToolSpec`（提示词自动带上）；返回值必须是 `list[Candidate]` |
+| 一个新工具 | `tools.py` 写函数 → 注册进 `TOOLS` → 加一条 `ToolSpec`（提示词自动带上）；候选类返回 `list[Candidate]`，事实类返回 `dict` |
+| 一个新品类 | 只加 `fixtures/` 里的一条数据（`category` 自由填，差异放 `attrs`），代码不用动 |
 | 改提示词 | 只动 `prompts/`，不碰循环 |
 | 改循环的出口 | `orchestrator.run()` |
 

@@ -121,29 +121,33 @@ class VerificationResult(BaseModel):
 
 
 class Candidate(BaseModel):
-    """工具查回来的一家店。"""
+    """工具查回来的一个候选：任何能排进方案的东西（店、票、场地、活动）。
+
+    category 是自由字符串，不做枚举——世界上的事没法穷举。
+    各品类独有的属性放 attrs，不要往这里加字段。
+    """
     model_config = ConfigDict(extra="forbid")
 
-    place_id: str = Field(pattern=r"^p\d{3}$")
+    place_id: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,31}$")
     name: str = Field(min_length=1)
-    kind: Literal["board_game", "restaurant"]
-    price_per_person: int = Field(ge=0)
-    open_min: int = Field(ge=0, le=1440)
-    close_min: int = Field(ge=0, le=1440)
+    category: str = Field(min_length=1)
     tags: list[str] = Field(default_factory=list)
-    noise: Literal["low", "mid", "high"] | None = None
-    has_private_room: bool | None = None
-    score: float | None = Field(default=None, ge=0, le=5)
+    price_per_person: int | None = Field(default=None, ge=0)
+    open_min: int | None = Field(default=None, ge=0, le=1440)
+    close_min: int | None = Field(default=None, ge=0, le=1440)
     distance_min: int | None = Field(default=None, ge=0)
+    score: float | None = Field(default=None, ge=0, le=5)
+    attrs: dict[str, Any] = Field(default_factory=dict)
 
 
 class GroupState(BaseModel):
-    """主循环共享的状态：约束、查到的店、被打回的原因、还没搞清的事。"""
+    """主循环共享的状态：约束、查到的候选、查到的其他事实、被打回的原因、还没搞清的事。"""
     goal: str = ""
     date: str | None = None
     participants: list[str] = Field(default_factory=list)
     constraints: list[Constraint] = Field(default_factory=list)
     found: dict[str, list[Candidate]] = Field(default_factory=dict)
+    facts: dict[str, Any] = Field(default_factory=dict)
     unknowns: list[str] = Field(default_factory=list)
     next_id: int = 1
     rejections: list[str] = Field(default_factory=list)
