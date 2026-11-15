@@ -7,36 +7,37 @@
   改词表只有一处，提示词和测试自动跟着变。
 
 词的来源是 `fixtures/places.json`，不是想象。加一个标签的顺序是：
-先有店的标签（B 那边）→ 再进这里 → 提示词自动带上。
+先有候选的标签（B 那边）→ 再进这里 → 提示词自动带上。
 
 约定
-- 活动和店铺类型是两套词：方案里写 dinner，查店用 restaurant。
-- 校验器目前只认这几个；写别的，一定对不上，等于没查。
+- 活动和品类是两套词：方案里写 dinner，查候选用 restaurant。
+- 品类（category）本身是自由字符串，这里的 PLACE_KINDS 只是「当前 fixtures 里有的」，
+  用来给提示词举例，不是校验白名单。
 """
 
-# 工具能查的店铺类型，对应 Candidate.kind 和 search_places(kind=...)
-PLACE_KINDS = ("board_game", "restaurant")
+# fixtures 里出现过的候选品类，对应 Candidate.category 和 search_options(category=...)
+PLACE_KINDS = ("board_game", "restaurant", "movie", "park")
 
 # 方案里的活动名，对应 Slot.activity 和 Activity.want
 ACTIVITIES = ("board_game", "dinner", "movie", "ktv")
 
-# 活动 -> 用哪个 kind 去查店。None 表示现在没有对应店铺，查也查不到。
+# 活动 -> 用哪个品类去查候选。None 表示现在没有对应候选，查也查不到。
 ACTIVITY_PLACE_KIND: dict[str, str | None] = {
     "board_game": "board_game",
     "dinner": "restaurant",
-    "movie": None,
+    "movie": "movie",
     "ktv": None,
 }
 
-# 查不到对应店铺的活动。规划层看到这些只能 ask 或 give_up。
+# 查不到对应候选的活动。规划层看到这些只能 ask 或 give_up。
 UNSUPPORTED_ACTIVITIES = tuple(a for a, k in ACTIVITY_PLACE_KIND.items() if k is None)
 
 # 忌口标签，对应 Candidate.tags 里能吃出来的部分。
 # 只有这几个！「海鲜」这类不在表里的，模型要照样记约束，但要写进 unknowns。
 DIET_TAGS = ("hotpot", "spicy", "noodle", "chinese")
 
-# 店的 tags 能出现的全部标签，测试拿它卡 fixtures/places.json。
-PLACE_TAGS = DIET_TAGS + ("board_game",)
+# 候选的 tags 能出现的全部标签，测试拿它卡 fixtures/places.json。
+PLACE_TAGS = DIET_TAGS + ("board_game", "movie", "park", "indoor", "outdoor")
 
 # 硬度：出现这些词判 hard
 HARD_WORDS = ("必须", "只能", "不行", "别", "不要", "一定", "不许", "不可以")

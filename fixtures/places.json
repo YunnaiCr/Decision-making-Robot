@@ -2,65 +2,85 @@
   {
     "place_id": "p001",
     "name": "骰子桌游（中山路店）",
-    "kind": "board_game",
+    "category": "board_game",
+    "tags": ["board_game", "indoor"],
     "price_per_person": 45,
     "open_min": 600,
     "close_min": 1380,
-    "tags": ["board_game"],
-    "noise": "low",
-    "has_private_room": true,
+    "distance_min": 5,
     "score": 4.6,
-    "distance_min": 5
+    "attrs": { "noise": "low", "private_room": true, "max_people": 8 }
   },
   {
     "place_id": "p002",
     "name": "疯狂桌游吧（城西）",
-    "kind": "board_game",
+    "category": "board_game",
+    "tags": ["board_game", "indoor"],
     "price_per_person": 30,
     "open_min": 600,
     "close_min": 1440,
-    "tags": ["board_game"],
-    "noise": "high",
-    "has_private_room": false,
+    "distance_min": 25,
     "score": 4.0,
-    "distance_min": 25
+    "attrs": { "noise": "high", "private_room": false, "max_people": 20 }
   },
   {
     "place_id": "p003",
     "name": "阿婆面馆",
-    "kind": "restaurant",
+    "category": "restaurant",
+    "tags": ["noodle", "chinese"],
     "price_per_person": 38,
     "open_min": 600,
     "close_min": 1260,
-    "tags": ["noodle"],
-    "noise": "low",
+    "distance_min": 3,
     "score": 4.3,
-    "distance_min": 3
+    "attrs": { "noise": "low" }
   },
   {
     "place_id": "p004",
     "name": "蜀香火锅",
-    "kind": "restaurant",
+    "category": "restaurant",
+    "tags": ["hotpot", "spicy"],
     "price_per_person": 88,
     "open_min": 660,
     "close_min": 1320,
-    "tags": ["hotpot", "spicy"],
-    "noise": "high",
-    "has_private_room": true,
+    "distance_min": 8,
     "score": 4.7,
-    "distance_min": 8
+    "attrs": { "noise": "high", "private_room": true }
   },
   {
     "place_id": "p005",
     "name": "江南小馆",
-    "kind": "restaurant",
+    "category": "restaurant",
+    "tags": ["chinese"],
     "price_per_person": 66,
     "open_min": 630,
     "close_min": 1290,
-    "tags": ["chinese"],
-    "noise": "mid",
-    "has_private_room": true,
+    "distance_min": 10,
     "score": 4.5,
-    "distance_min": 10
+    "attrs": { "noise": "mid", "private_room": true }
+  },
+  {
+    "place_id": "p006",
+    "name": "星光影城",
+    "category": "movie",
+    "tags": ["movie", "indoor"],
+    "price_per_person": 55,
+    "open_min": 600,
+    "close_min": 1440,
+    "distance_min": 12,
+    "score": 4.8,
+    "attrs": { "screen": "IMAX", "duration_min": 120 }
+  },
+  {
+    "place_id": "p007",
+    "name": "城市公园",
+    "category": "park",
+    "tags": ["park", "outdoor"],
+    "price_per_person": null,
+    "open_min": 0,
+    "close_min": 1440,
+    "distance_min": 18,
+    "score": 4.2,
+    "attrs": { "free": true, "outdoor": true }
   }
 ]

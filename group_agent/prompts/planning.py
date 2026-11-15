@@ -7,12 +7,13 @@
 import json
 from typing import Any
 
+from ..tools import describe_tools
 from . import vocab as v
 
 SYSTEM = """你是规划器：看着当前状态，每轮只输出一个决定。
 判断要能对着状态说清理由，不要跳步，也不要为了交差硬给方案。只输出 JSON。"""
 
-# 活动 -> 查店用的 kind，从词表生成，不手写。
+# 活动 -> 查哪个品类，从词表生成，不手写。
 _MAPPING = "\n".join(
     f"  {activity} 用 {kind} 查"
     for activity, kind in v.ACTIVITY_PLACE_KIND.items()
@@ -23,32 +24,34 @@ RULES = f"""
 任务：每轮只输出一个 PlannerDecision。看状态，决定下一步做什么。
 
 决策顺序（从上往下问，第一个「是」就是这一轮的决定）
-A. 还缺查得到的信息，该看的店还没看 → act
+A. 还缺查得到的信息，该看的候选还没看 → act
 B. 现在的信息够排出满足硬约束的方案 → final
 C. 排不出，缺的是只有群里才知道的（哪天去、几个人、预算能不能加）→ ask
-D. 排不出，是硬约束之间打架（人均只能 50，最便宜的店要 88）→ give_up
+D. 排不出，是硬约束之间打架（人均只能 50，最便宜的候选要 88）→ give_up
    give_up 的 reason 要写清哪两条打架。没查完不许说无解。
 
-工具（act 时只能调这两个）
-- search_places(kind, max_price)：kind 只能是 {v.words(v.PLACE_KINDS)}。
-  有预算约束就把人均上限填进 max_price，先把贵的筛掉。
-- get_place(place_id)：已经查到的店直接用进方案，不要再用它查一遍。
-- 活动和工具不是同一套词，查店时按这个对应：
+工具（act 时只能调下面这些，参数名必须和这里完全一致）
+{describe_tools()}
+  活动和品类不是同一套词，查候选时按这个对应：
 {_MAPPING}
-  {v.words(v.UNSUPPORTED_ACTIVITIES)} 现在没有对应店铺，查也查不到，只能 ask 或 give_up。
+  {v.words(v.UNSUPPORTED_ACTIVITIES)} 现在没有对应的候选，查也查不到，只能 ask 或 give_up。
 
-查店的规矩
+查候选的规矩
 - 一轮只查一类，查到一类就够了。
-- 同一类最多查两次。第一次查到空，别用同样的参数再查，放宽 max_price 或换 kind。
+- 同一类最多查两次。第一次查到空，别用同样的参数再查，放宽 max_price 或换 category。
 - 查到空列表的意思是「这个条件下没有」，不是「还没查过」。
-- 状态里已经列出来的店不要再查。
+- 状态里已经列出来的候选不要再查。
+- category 不是固定清单，是自由文字。不确定这个世界有什么，先调 catalog 看品类、
+  标签和属性，再按它给出的词去 search_options。
+- 品类独有的条件走 attrs 键值（例如 attrs={{"noise": "low"}}），不要自己发明参数名。
 
 方案（final 的 draft）
 - participants 照抄状态里的名单，date 照抄状态里的日期（可能是 null）。
 - 每个 slot 要有：start_min / end_min（分钟）、activity、place_id、place_name、attrs。
 - activity 必须是 activity 约束要的那个词，不能自己换近义词。
-- attrs 里只放 {{"cost_per_person": 人均}}，数值必须和那家店一致；不知道就别放这个键。
-- 时间要落在店的营业区间内（状态里每家有 营业 a-b），前后不要重叠，单个活动 60–120 分钟。
+- attrs 里只放 {{"cost_per_person": 人均}}，数值必须和那个候选一致；不知道就别放这个键。
+- 时间要落在候选的可用区间内（状态里每个候选有「可用 a-b」），前后不要重叠，
+  单个活动 60–120 分钟。
 - 硬约束一条都不能违反，违反了会被校验器打回；软约束尽量照顾。
 
 「还不清楚的事」怎么对待
@@ -86,28 +89,28 @@ _BASE_STATE = """目标：周六下午聚一下
 
 EXAMPLES: list[dict[str, Any]] = [
     {
-        "note": "还没查店，先查一类",
+        "note": "还没查候选，先查一类",
         "state": _BASE_STATE
-        + """已经查到的店：
+        + """已经查到的候选：
   （还没查）
 """,
         "decision": {
             "kind": "act",
             "action": {
-                "tool": "search_places",
-                "arguments": {"kind": "board_game", "max_price": 100},
-                "why": "约束里要桌游，先看桌游店",
+                "tool": "search_options",
+                "arguments": {"category": "board_game", "max_price": 100},
+                "why": "约束里要桌游，先看桌游类",
             },
-            "reason": "桌游店还没查过",
+            "reason": "桌游类还没查过",
         },
     },
     {
-        "note": "两类店都查到了，交方案",
+        "note": "两类候选都查到了，交方案",
         "state": _BASE_STATE
-        + """已经查到的店：
-  p001 骰子桌游（中山路店） 人均45 tags=['board_game'] 营业600-1380
-  p002 疯狂桌游吧（城西） 人均30 tags=['board_game'] 营业600-1440
-  p003 阿婆面馆 人均38 tags=['noodle'] 营业600-1260
+        + """已经查到的候选：
+  p001 骰子桌游（中山路店） [board_game] 人均45 可用600-1380 距离5分 评分4.6
+  p002 疯狂桌游吧（城西） [board_game] 人均30 可用600-1440 距离25分 评分4.0
+  p003 阿婆面馆 [restaurant] 人均38 可用600-1260 距离3分 评分4.3
 """,
         "decision": {
             "kind": "final",
@@ -133,7 +136,7 @@ EXAMPLES: list[dict[str, Any]] = [
                     },
                 ],
             },
-            "reason": "桌游加晚饭，人均 83 在预算内，两段都在营业区间和空闲时间里",
+            "reason": "桌游加晚饭，人均 83 在预算内，两段都在可用区间和空闲时间里",
         },
     },
 ]

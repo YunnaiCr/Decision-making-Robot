@@ -61,7 +61,7 @@ def test_every_fixture_tag_is_in_the_vocabulary():
 
 def test_every_fixture_kind_is_in_the_vocabulary():
     for place in PLACES.values():
-        assert place.kind in vocab.PLACE_KINDS
+        assert place.category in vocab.PLACE_KINDS
 
 
 def test_activity_mapping_only_points_at_real_kinds():
