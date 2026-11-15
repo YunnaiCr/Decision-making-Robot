@@ -79,7 +79,7 @@ merge   真正合进 main                     需要 CI 绿 + 一个人同意
        git add -A && git commit -m "..."
        git push origin feat/b-tools          推到远端（还不开 PR）
 
-做完了 开 PR → 队友 Approve → CI 绿 → Squash and merge → 删分支
+做完了 开 PR → 队友 Approve → CI 绿 → Create a merge commit → 删分支
 
 第二天 git checkout main && git pull          回到最新
 ```
@@ -170,13 +170,15 @@ python -m pytest -q
 
 ## 怎么合并
 
-点绿色的 **Squash and merge**（不是旁边那个普通 Merge）。
+点绿色的 **Create a merge commit**。
 
 ```text
-一个 PR → main 上多一条提交
+一个 PR → main 上多出「你分支的全部提交 + 一个合并提交」
 ```
 
-这样 main 的历史一条对应一件事，回滚时 revert 一条就行。
+历史里能看见这条分支从哪里分出去、在哪里合回来，`git log --graph` 很直观，各人回看自己的分支也方便。
+
+按钮旁边的下拉里还有 **Squash and merge**，会把整个 PR 压成一个提交——**那是例外，不是默认**，只有一堆小修小补、不想留过程时才用。
 
 > 推了新提交之后，之前那个 Approve 会自动作废——因为人家批的是旧代码。改完在 PR 里 @ 一下对方。
 
