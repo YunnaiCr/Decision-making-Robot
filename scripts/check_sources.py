@@ -13,10 +13,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from group_agent import sources
+from group_agent import llm, sources
 
 
 def main() -> None:
+    # 让仓库根的 .env 里的 AMAP_KEY 也生效，和 CLI 的行为保持一致
+    llm.load_dotenv()
+
     city = sys.argv[1] if len(sys.argv) > 1 else "北京"
     keyword = sys.argv[2] if len(sys.argv) > 2 else "电影院"
 
