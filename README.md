@@ -89,6 +89,14 @@ QQ **没有公开的聊天记录接口**，现实里只有两条路：
 
 没配 key 时它们返回 `unavailable`，**不会静默降级成假数据**。测试全部用假 transport，不联网。
 
+配好之后可以真跑一次（会打真实接口）：
+
+```bash
+AMAP_KEY=你的key .venv/bin/python scripts/check_sources.py 北京 电影院
+```
+
+单测用抓下来的报文（`fixtures/remote/`），这个脚本打真接口，两边分开。
+
 接别的平台就照着 `group_agent/sources.py` 里的函数写一个，解析成 `Candidate` 或 dict，
 再到 `tools.py` 注册。注意大多数平台没有公开 API，接之前先看服务条款。
 
