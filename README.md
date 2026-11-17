@@ -83,9 +83,9 @@ QQ **没有公开的聊天记录接口**，现实里只有两条路：
 
 配了 `AMAP_KEY` 之后多两个工具：
 
-- `search_remote(keyword, city)`：去高德查真实地点。返回的候选**没有营业时间**，价格也常缺，
-  和 fixtures 里的本地数据不是一回事
-- `weather(city)`：城市实时天气
+- `search_remote(keyword, city)`：去高德查真实地点。营业时间和价格**有就给、没有就留空**，
+  留空的候选会被“缺数据 = 不满足”的规则筛掉
+- `weather(city, date)`：城市天气。不给 `date` 是实时；给 `YYYY-MM-DD` 查那天的预报（只覆盖未来三天）
 
 没配 key 时它们返回 `unavailable`，**不会静默降级成假数据**。测试全部用假 transport，不联网。
 

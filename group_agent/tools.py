@@ -11,6 +11,8 @@ category 不做枚举，属性差异放 Candidate.attrs，所以加一类新东�
 - 外部世界的访问只走这里，别的模块不许直接读 fixtures。
 - 参数不合法抛 ToolError，由 dispatch 统一转成 Observation。
 - 查不到返回空列表或空，不猜也不造。
+- 缺数据统一按「不满足」处理：筛选丢掉、排序丢掉、check_open 返回不可用。
+  以后要做“次级推荐”再说，现在只保一个语义。
 - 属性过滤用 attrs（键值匹配），不要为每个品类加一个专用参数。
 - 加一个工具：写函数 -> 加进 TOOLS -> 加一条 ToolSpec。提示词会自动跟着变。
 """
@@ -246,11 +248,10 @@ def rank_options(option_ids: list[str], by: str = "price") -> list[Candidate]:
         raise ToolError("bad_args", f"by 只能是 {' / '.join(_RANKERS)}，收到 {by!r}")
 
     key, reverse = _RANKERS[by]
-    options = _pick(option_ids)
-    known = [option for option in options if key(option) is not None]
-    unknown = [option for option in options if key(option) is None]
+    # 缺这个字段的直接丢掉：和筛选保持同一套「缺数据 = 不满足」的语义。
+    known = [option for option in _pick(option_ids) if key(option) is not None]
     known.sort(key=key, reverse=reverse)
-    return known + unknown
+    return known
 
 
 def alternatives(
@@ -328,12 +329,13 @@ def check_open(option_id: str, start_min: int, end_min: int) -> dict[str, Any]:
         raise ToolError("not_found", f"没有这个候选: {option_id}")
 
     if option.open_min is None or option.close_min is None:
+        # 统一策略：缺数据按「不可用」处理。宁可排不进去，也不猜它开着。
         return {
             "place_id": option.place_id,
             "name": option.name,
-            "open": None,
+            "open": False,
             "window": None,
-            "reason": "没有可用的时间数据，无法判定",
+            "reason": "没有可用的时间数据，按不可用处理",
         }
 
     inside = option.open_min <= start_min and end_min <= option.close_min
@@ -409,9 +411,9 @@ def catalog() -> dict[str, Any]:
 
 
 def weather(city: str, date: str | None = None) -> dict[str, Any]:
-    """查城市的实时天气（高德）。date 先留着，现在不区分预报日期。"""
+    """查天气。不给 date 返回实时；给了 date（YYYY-MM-DD）只认那一天的预报。"""
     try:
-        return sources.amap_weather(city)
+        return sources.amap_weather(city, date)
     except sources.SourceError as exc:
         raise ToolError(exc.kind, exc.message) from exc
 

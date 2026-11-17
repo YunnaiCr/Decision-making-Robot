@@ -1,15 +1,17 @@
 """外部数据源：从别的平台取数据。
 
 现在只接高德（Amap）：天气和 POI（地点）搜索。
-都是 HTTP + 一个 key，所以：
+这一层只负责「发请求 + 判错」，数据怎么翻译成我们的类型交给 `adapters.py`——
+真实世界的字段形状放在一处，测试也只需要对着抓下来的原始报文跑。
 
+三条规矩
 - key 从环境变量 `AMAP_KEY` 读，没配就抛 `SourceError("unavailable")`，
-  不会静默降级成假数据
+  不静默降级成假数据
 - 网络请求可以注入 `transport`，测试离线跑，不碰网
-- 这里只负责“取回来并翻译成我们的类型”，不做缓存、不做重试
+- 不做缓存、不做重试：那是调用方（tools）该决定的事
 
 想接别的平台（和风天气、豆瓣、大众点评…）：照着 `amap_weather` 写一个函数，
-解析成同样的 dict / list[Candidate]，再在 `tools.py` 注册一个工具就行。
+把响应交给 `adapters` 里对应的翻译函数，再在 `tools.py` 注册一个工具。
 注意大多数平台没有公开 API，接之前先确认服务条款。
 """
 
@@ -19,6 +21,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Callable
 
+from . import adapters
 from .models import Candidate
 
 AMAP_BASE = "https://restapi.amap.com"
@@ -62,29 +65,23 @@ def _check(data: dict[str, Any]) -> None:
         raise SourceError("upstream", f"高德返回错误: {info} {code}".strip())
 
 
-def amap_weather(city: str, key: str | None = None, transport: Transport | None = None) -> dict[str, Any]:
-    """查某城市实时天气。city 可以是城市名或 adcode。"""
+def amap_weather(
+    city: str,
+    date: str | None = None,
+    key: str | None = None,
+    transport: Transport | None = None,
+) -> dict[str, Any]:
+    """查天气。不给 date 返回实时；给了就只认预报里那一天（覆盖不到会说查不到）。
+
+    city 可以是城市名或 adcode。
+    """
     if not city.strip():
         raise SourceError("bad_args", "city 不能是空的")
 
-    query = urllib.parse.urlencode({"city": city, "key": _key(key), "extensions": "base"})
+    query = urllib.parse.urlencode({"city": city, "key": _key(key), "extensions": "all"})
     data = _fetch(f"{AMAP_BASE}/v3/weather/weatherInfo?{query}", transport)
     _check(data)
-
-    lives = data.get("lives") or []
-    if not lives:
-        raise SourceError("not_found", f"查不到 {city} 的天气")
-
-    live = lives[0]
-    return {
-        "city": live.get("city") or city,
-        "weather": live.get("weather"),
-        "temperature": live.get("temperature"),
-        "wind": f"{live.get('winddirection', '')}{live.get('windpower', '')}",
-        "humidity": live.get("humidity"),
-        "reported_at": live.get("reporttime"),
-        "source": "amap",
-    }
+    return adapters.amap_weather_fact(data, date)
 
 
 def amap_places(
@@ -96,7 +93,7 @@ def amap_places(
 ) -> list[Candidate]:
     """按关键词查地点，翻译成 Candidate。
 
-    高德不提供营业时间，价格也常缺，所以这两项留 None —— 不猜。
+    高德不保证给营业时间和价格，缺了就留 None —— 筛选时会被当作「不满足」。
     """
     if not keyword.strip():
         raise SourceError("bad_args", "keyword 不能是空的")
@@ -111,35 +108,7 @@ def amap_places(
     if not pois:
         raise SourceError("not_found", f"在 {city} 查不到「{keyword}」")
 
-    found: list[Candidate] = []
-    for poi in pois[:limit]:
-        name = poi.get("name") or ""
-        poi_id = str(poi.get("id") or "").lower()
-        if not name or not poi_id:
-            continue
-
-        biz = poi.get("biz_ext") or {}
-        price = None
-        raw_cost = biz.get("cost")
-        if isinstance(raw_cost, str) and raw_cost.strip():
-            try:
-                price = int(float(raw_cost))
-            except ValueError:
-                price = None
-
-        found.append(
-            Candidate(
-                place_id=f"amap-{poi_id[:27]}",
-                name=name,
-                category=(poi.get("type") or "place").split(";")[0],
-                tags=[tag for tag in (poi.get("type") or "").split(";") if tag],
-                price_per_person=price,
-                attrs={
-                    "address": poi.get("address"),
-                    "tel": poi.get("tel"),
-                    "source": "amap",
-                },
-            )
-        )
-
-    return found
+    options = [option for poi in pois if (option := adapters.amap_poi(poi)) is not None]
+    if not options:
+        raise SourceError("not_found", f"在 {city} 查到的「{keyword}」都缺名字或编号")
+    return options[:limit]

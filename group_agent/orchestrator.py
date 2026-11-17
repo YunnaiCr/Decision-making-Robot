@@ -188,7 +188,14 @@ def remember(state: GroupState, action: ActionRequest, data: Any) -> None:
         data = [data]
     if isinstance(data, list) and all(isinstance(item, Candidate) for item in data):
         key = action.arguments.get("category") or action.tool
-        state.found[key] = data
+        # 同一个 key 的多次查询要合并，不能后一次把前一次冲掉；
+        # 同一个候选只留一份，顺序按第一次出现的来。
+        bucket = state.found.setdefault(key, [])
+        seen = {item.place_id for item in bucket}
+        for item in data:
+            if item.place_id not in seen:
+                bucket.append(item)
+                seen.add(item.place_id)
         return
 
     args = json.dumps(action.arguments, ensure_ascii=False, sort_keys=True)

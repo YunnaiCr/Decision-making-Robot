@@ -137,6 +137,41 @@ understand(chat) ──► GroupState ──┬──► run() ──► FinalPl
 属性过滤走 `attrs` 键值，别为每个品类加专用参数：`attrs={"noise": "low"}`、
 `attrs={"private_room": true}`。加一个新品类不需要改任何工具代码。
 
+## 真实世界 → 模型能读的数据
+
+外部 API 写给人看，模型要的是稳定字段。这层翻译全在 `adapters.py`——
+它是最容易出错的地方，所以单独放、单独测。
+
+| 真实世界的样子 | 翻译成 |
+|---|---|
+| `type: "餐饮服务;中餐厅;火锅店"` | `category="restaurant"`，`tags=["hotpot","chinese"]` |
+| `biz_ext.cost: "88.00"` | `price_per_person=88`；`[]` 或 `"免费"` → `None` |
+| `biz_ext.open_time: "10:00-22:00"` | `open_min=600, close_min=1320`；跨天的 `22:00-02:00` → `None` |
+| `address: []`（高德缺值常给数组） | `attrs` 里干脆没有这个键 |
+| `id: "B0FFH1X2Y3"` | `place_id="amap-b0ffh1x2y3"`（小写、限长 32） |
+| 原始 id / 地址 / 电话 / 坐标 | 全留在 `attrs` 里，出问题能回去查 |
+
+三条原则：**不猜**（缺就是 `None`）、**可追溯**（保留原始编号）、**有兜底**
+（分类映射不上落到 `other`，单条脏数据跳过而不是整单报错）。
+
+测试用的是抓下来的真实报文（`fixtures/remote/`），不是手搓的假 JSON：
+字段形状一变，测试先红，而不是线上才发现。
+
+## 缺数据时怎么办
+
+只保一个语义：**缺数据 = 不满足**。
+
+| 场景 | 行为 |
+|---|---|
+| `_match` 的每种过滤 | 缺对应字段 → 这条候选被丢掉 |
+| `rank_options` | 缺排序字段 → 丢掉（不是排最后） |
+| `check_open` | 没有时间窗 → `open=false`，reason 写「按不可用处理」 |
+| `estimate_cost` | 缺价格 → 不算总数，把缺的 id 列进 `missing` |
+
+为什么不“保留”或“当次级推荐”：校验器会把缺数据判成 `undecided`，再放一条
+“可能行”进来，模型很容易把它写成确定安排。等以后有单独的“待核实候选”通道，
+再放开这个语义。
+
 ## 契约
 
 这几样东西跨模块流动，改动要全员知会。
@@ -183,6 +218,7 @@ group_agent/
 ├── tools.py         工具：候选类返列表、事实类返字典，四类错误分开
 ├── ingest.py        导入聊天记录：QQ 导出的 txt / 自己的 JSON
 ├── sources.py       外部数据源：高德天气和地点，没 key 就说不可用
+├── adapters.py      把外部报文翻译成 Candidate / 事实（真实世界的脏活都在这）
 ├── verifier.py      校验：纯函数，不调模型
 ├── orchestrator.py  主循环：编排三个节点，并决定结果进 found 还是 facts
 ├── minutes.py       纪要：策划完之后再问一次模型，不进循环
@@ -194,6 +230,7 @@ group_agent/
 └── __main__.py      入口
 
 fixtures/            假数据：7 个候选（桌游/餐厅/影院/公园）、路上时间、e01 聊天记录
+fixtures/remote/     抓下来的高德原始报文，测试用（不是手搓的）
 tests/               测试，全部离线
 scripts/check_llm.py 换 key / 换模型后自检
 scripts/check_tools.py 改完工具后自检
