@@ -32,13 +32,21 @@ def test_weather_sends_key_and_asks_for_forecast(monkeypatch):
     fact = amap_weather("北京", transport=transport)
     assert fact["weather"] == "晴"
     assert "key=test-key" in seen["url"]
-    # 要预报就得请求 all，只要实时是 base
-    assert "extensions=all" in seen["url"]
+    # 只要实时就用 base（all 拿不到 lives）
+    assert "extensions=base" in seen["url"]
 
 
 def test_weather_with_date_uses_forecast(monkeypatch):
     monkeypatch.setenv("AMAP_KEY", "k")
-    fact = amap_weather("北京", date="2026-11-17", transport=lambda url: WEATHER)
+    seen = {}
+
+    def transport(url):
+        seen["url"] = url
+        return WEATHER
+
+    fact = amap_weather("北京", date="2026-11-17", transport=transport)
+    # 要预报才请求 all
+    assert "extensions=all" in seen["url"]
     assert fact["kind"] == "forecast"
     assert fact["date"] == "2026-11-17"
     assert fact["temp_high"] == 14

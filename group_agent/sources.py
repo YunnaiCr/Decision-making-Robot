@@ -78,7 +78,9 @@ def amap_weather(
     if not city.strip():
         raise SourceError("bad_args", "city 不能是空的")
 
-    query = urllib.parse.urlencode({"city": city, "key": _key(key), "extensions": "all"})
+    # 高德的分水岭：base 只给实时，all 只给预报。要哪个就请求哪个，别指望一次拿全。
+    extensions = "all" if date else "base"
+    query = urllib.parse.urlencode({"city": city, "key": _key(key), "extensions": extensions})
     data = _fetch(f"{AMAP_BASE}/v3/weather/weatherInfo?{query}", transport)
     _check(data)
     return adapters.amap_weather_fact(data, date)
