@@ -30,6 +30,11 @@ from .models import ActionRequest, Candidate, ErrorInfo, Observation
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 
+# 一次最多处理多少条：防止某个工具把几百条结果灌进提示词
+MAX_IDS = 50
+MAX_RESULTS = 50
+MAX_HEADCOUNT = 1000
+
 _places: list[Candidate] | None = None
 _travel: dict[tuple[str, str], int] | None = None
 
@@ -182,6 +187,8 @@ def _match(option: Candidate, filters: Filters) -> bool:
 
 def _pick(option_ids: list[str]) -> list[Candidate]:
     """按编号取候选，保持传入顺序，重复的只留一次。有不认识的编号就报错。"""
+    if len(option_ids) > MAX_IDS:
+        raise ToolError("bad_args", f"一次最多查 {MAX_IDS} 个编号")
     index = places_by_id()
     missing = [option_id for option_id in option_ids if option_id not in index]
     if missing:
@@ -204,13 +211,14 @@ def search_options(
     """按条件找候选。category 自由填，不认识的品类返回空列表。"""
     filters = _collect(tags, avoid_tags, attrs, max_price, open_from, open_to, max_distance, min_score)
     skip = set(exclude_ids or [])
-    return [
+    found = [
         option
         for option in load_places()
         if (category is None or option.category == category)
         and option.place_id not in skip
         and _match(option, filters)
     ]
+    return found[:MAX_RESULTS]
 
 
 def get_option(option_id: str) -> list[Candidate]:
@@ -370,8 +378,8 @@ def travel_time(from_option_id: str, to_option_id: str) -> dict[str, Any]:
 
 def estimate_cost(option_ids: list[str], headcount: int = 1) -> dict[str, Any]:
     """把几个候选的人均价加起来，按人数算总价。有未知价时给出 missing。"""
-    if headcount < 1:
-        raise ToolError("bad_args", "headcount 至少是 1")
+    if not 1 <= headcount <= MAX_HEADCOUNT:
+        raise ToolError("bad_args", f"headcount 要在 1-{MAX_HEADCOUNT} 之间")
 
     options = _pick(option_ids)
     missing = [option.place_id for option in options if option.price_per_person is None]
@@ -421,7 +429,7 @@ def weather(city: str, date: str | None = None) -> dict[str, Any]:
 def search_remote(keyword: str, city: str, limit: int = 5) -> list[Candidate]:
     """去高德查真实地点。返回的候选没有营业时间，价格也可能缺，所以别当成本地数据。"""
     try:
-        return sources.amap_places(keyword, city, limit=limit)
+        return sources.amap_places(keyword, city, limit=max(1, min(int(limit), 25)))
     except sources.SourceError as exc:
         raise ToolError(exc.kind, exc.message) from exc
 

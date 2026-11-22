@@ -4,3 +4,11 @@ __pycache__/
 runs/
 .env
 .pytest_cache/
+
+# 任何环境文件（除示例）
+.env.*
+!.env.example
+# 证书和密钥文件
+*.pem
+*.key
+secrets/

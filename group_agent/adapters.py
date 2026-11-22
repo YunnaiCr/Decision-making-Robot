@@ -44,14 +44,24 @@ _TAG_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
 
 _HOURS = re.compile(r"(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})")
 
+# 外部文本会进提示词，所以先在边界上收窄：去掉控制字符、压平空白、限长。
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
 
 def text(value: Any) -> str:
-    """把高德那种“缺值给 []”的字段压成字符串。"""
+    """把高德那种“缺值给 []”的字段压成字符串，并去掉控制字符。"""
     if isinstance(value, str):
-        return value.strip()
-    if isinstance(value, list):
-        return ";".join(item for item in value if isinstance(item, str)).strip()
-    return ""
+        raw = value
+    elif isinstance(value, list):
+        raw = ";".join(item for item in value if isinstance(item, str))
+    else:
+        return ""
+    return _CONTROL.sub("", raw).strip()
+
+
+def clean(value: Any, limit: int) -> str:
+    """给要进提示词的字段用：压平空白 + 限长，别让一段长文本挤爆上下文。"""
+    return " ".join(text(value).split())[:limit].strip()
 
 
 def category_of(type_text: str) -> str:
@@ -106,7 +116,7 @@ def option_id(poi_id: str) -> str:
 
 def amap_poi(poi: dict[str, Any]) -> Candidate | None:
     """一条高德 POI -> Candidate。缺名字或编号就返回 None（跳过这条）。"""
-    name = text(poi.get("name"))
+    name = clean(poi.get("name"), 60)
     place_id = option_id(text(poi.get("id")))
     if not name or not place_id:
         return None
@@ -115,8 +125,8 @@ def amap_poi(poi: dict[str, Any]) -> Candidate | None:
     window = hours_of(poi)
 
     attrs: dict[str, Any] = {"source": "amap", "source_id": text(poi.get("id"))}
-    address = text(poi.get("address"))
-    tel = text(poi.get("tel"))
+    address = clean(poi.get("address"), 120)
+    tel = clean(poi.get("tel"), 40)
     if address:
         attrs["address"] = address
     if tel:

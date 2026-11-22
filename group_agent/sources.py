@@ -67,7 +67,8 @@ def _fetch(url: str, transport: Transport | None = None) -> dict[str, Any]:
         with urllib.request.urlopen(url, timeout=TIMEOUT_S) as response:
             return json.loads(response.read().decode("utf-8"))
     except OSError as exc:
-        raise SourceError("upstream", f"请求高德失败: {_redact(str(exc))}") from exc
+        # 不要链上原始异常：HTTPError 的 traceback 里带着完整 URL（含 key）
+        raise SourceError("upstream", f"请求高德失败: {_redact(str(exc))}") from None
 
 
 def _check(data: dict[str, Any]) -> None:
@@ -112,6 +113,8 @@ def amap_places(
     """
     if not keyword.strip():
         raise SourceError("bad_args", "keyword 不能是空的")
+    # 高德单页最多 25 条，多的也要挡住，别让它变成配额放大器
+    limit = max(1, min(int(limit), 25))
 
     query = urllib.parse.urlencode(
         {"keywords": keyword, "city": city, "key": _key(key), "offset": limit, "page": 1}
