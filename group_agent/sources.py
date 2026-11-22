@@ -17,6 +17,7 @@
 
 import json
 import os
+import re
 import urllib.parse
 import urllib.request
 from typing import Any, Callable
@@ -47,6 +48,18 @@ def _key(explicit: str | None = None) -> str:
     return key
 
 
+_KEY_IN_QUERY = re.compile(r"(key=)[^&\s]+")
+
+
+def _redact(text: str) -> str:
+    """把 URL 里的 key 打码。
+
+    报错信息会进日志，也会被 dispatch 拼进状态、回灌给模型——
+    这两条路都不该带 key。
+    """
+    return _KEY_IN_QUERY.sub(r"\1***", text)
+
+
 def _fetch(url: str, transport: Transport | None = None) -> dict[str, Any]:
     if transport is not None:
         return transport(url)
@@ -54,7 +67,7 @@ def _fetch(url: str, transport: Transport | None = None) -> dict[str, Any]:
         with urllib.request.urlopen(url, timeout=TIMEOUT_S) as response:
             return json.loads(response.read().decode("utf-8"))
     except OSError as exc:
-        raise SourceError("upstream", f"请求高德失败: {exc}") from exc
+        raise SourceError("upstream", f"请求高德失败: {_redact(str(exc))}") from exc
 
 
 def _check(data: dict[str, Any]) -> None:
