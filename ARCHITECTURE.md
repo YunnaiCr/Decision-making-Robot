@@ -172,6 +172,20 @@ understand(chat) ──► GroupState ──┬──► run() ──► FinalPl
 “可能行”进来，模型很容易把它写成确定安排。等以后有单独的“待核实候选”通道，
 再放开这个语义。
 
+## 隐私边界
+
+聊天原文要发给模型，所以 PII 在**离开进程之前**统一打码（`privacy.redact`），
+三个出口各接一次：
+
+```text
+format_chat     聊天原文 -> 理解层        打码
+format_state    evidence 原话 -> 规划层    打码（整段输出前做一次）
+build_facts     纪要事实 -> 纪要层         打码
+```
+
+校验器不受影响：它只看结构化的时间和价格，不看文本。
+`PRIVACY_REDACT=0` 可以关，但那样手机号会跟着 evidence 进提示词。
+
 ## 契约
 
 这几样东西跨模块流动，改动要全员知会。

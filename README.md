@@ -110,5 +110,28 @@ AMAP_KEY=你的key .venv/bin/python scripts/check_sources.py 北京 电影院
 
 ## 文档
 
+## 隐私
+
+聊天记录里如果出现手机号、身份证、邮箱、银行卡，程序会在**发给模型之前**打码
+（`group_agent/privacy.py`）：
+
+```text
+手机号    →  138****8000
+身份证    →  110101********1234
+邮箱      →  <email>
+银行卡    →  6222********0123
+```
+
+（这里只写打码后的样子——写原始号码会被 `tests/test_privacy.py` 拦下来。）
+
+默认开启，`PRIVACY_REDACT=0` 可临时关掉（不建议）。时间和价格不在打码范围内，
+否则规划就废了。
+
+两件必须知道的事：
+
+- **聊天原文仍会发送给模型服务商**，这是功能本身决定的。不想外发就别用它。
+- **真实聊天导出请放进 `private/`**（已在 `.gitignore`），不要放进 `fixtures/`；
+  `tests/test_privacy.py` 会扫描已提交的文件，发现手机号/身份证/邮箱就报错。
+
 - [架构说明](ARCHITECTURE.md)：为什么这么设计
 - [协作方式](CONTRIBUTING.md)：分支、PR、评审

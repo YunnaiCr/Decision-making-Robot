@@ -12,3 +12,7 @@ runs/
 *.pem
 *.key
 secrets/
+
+# 真实聊天记录导出：放这里，别放 fixtures/
+private/
+*.chat.txt

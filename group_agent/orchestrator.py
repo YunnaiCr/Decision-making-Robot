@@ -10,7 +10,7 @@ from typing import Any, Callable
 
 from pydantic import ValidationError
 
-from . import llm
+from . import llm, privacy
 from .models import (
     ActionRequest,
     Candidate,
@@ -36,9 +36,12 @@ MAX_REJECTIONS = 3
 
 
 def format_chat(chat: ChatLog) -> str:
-    """编号 + 说话人 + 原文，一行一条。"""
+    """编号 + 说话人 + 原文，一行一条。
+
+    这是聊天原文第一次离开进程的地方，先把手号/身份证之类的打码。
+    """
     lines = [f"{m.i:02d} {m.who}：{m.text}" for m in chat.messages]
-    return "聊天记录：" + chr(10) + chr(10).join(lines)
+    return privacy.redact("聊天记录：" + chr(10) + chr(10).join(lines))
 
 
 def describe_candidate(option: Candidate) -> str:
@@ -99,7 +102,8 @@ def format_state(state: GroupState) -> str:
         for u in state.unknowns:
             lines.append("  - " + u)
 
-    return chr(10).join(lines)
+    # 约束的 evidence 是原话引用，可能带号码；整段出去前统一打码
+    return privacy.redact(chr(10).join(lines))
 
 
 def extract(chat: ChatLog) -> StateDelta:
