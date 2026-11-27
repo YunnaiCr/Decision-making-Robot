@@ -232,3 +232,75 @@ def test_express_failure_falls_back_to_template():
     assert plan.status == "ok"
     assert "None" not in plan.message
     assert plan.total_cost == 249
+
+
+def test_remember_keeps_two_searches_apart():
+    from group_agent.models import Candidate
+    from group_agent.orchestrator import remember
+
+    state = GroupState()
+    first = ActionRequest(tool="search_remote", arguments={"keyword": "海底捞"})
+    second = ActionRequest(tool="search_remote", arguments={"keyword": "万达影城"})
+
+    remember(state, first, [Candidate(place_id="amap-a", name="海底捞", category="restaurant")])
+    remember(state, second, [Candidate(place_id="amap-b", name="万达影城", category="movie")])
+
+    assert len(state.found) == 2
+    ids = {option.place_id for group in state.found.values() for option in group}
+    assert ids == {"amap-a", "amap-b"}
+
+
+def test_remember_does_not_duplicate_the_same_option():
+    from group_agent.models import Candidate
+    from group_agent.orchestrator import remember
+
+    state = GroupState()
+    request = ActionRequest(tool="search_options", arguments={"category": "board_game"})
+    option = Candidate(place_id="p001", name="A", category="board_game")
+
+    remember(state, request, [option])
+    remember(state, request, [option])
+
+    assert state.found["board_game"] == [option]
+
+
+def test_express_retries_when_lint_finds_an_invented_number(monkeypatch):
+    from group_agent import llm, orchestrator
+
+    seen = []
+
+    def fake_complete(system, user, schema, **kwargs):
+        seen.append(user)
+        text = "人均 120，一共 249" if len(seen) == 1 else "人均 83，一共 249"
+        return llm.LLMResult(data={"message": text}, tokens=0, ms=0)
+
+    monkeypatch.setattr(llm, "complete_json", fake_complete)
+
+    draft = FinalDraft(participants=THREE, slots=two_slots())
+    result = verify([], draft, PLACES)
+    state = GroupState(date=None, participants=list(THREE))
+    message = orchestrator.express(state, draft, result)
+
+    assert message == "人均 83，一共 249"
+    assert len(seen) == 2
+    assert "改掉" in seen[1]
+
+
+def test_express_gives_up_after_two_bad_attempts(monkeypatch):
+    from group_agent import llm, orchestrator
+
+    def fake_complete(system, user, schema, **kwargs):
+        return llm.LLMResult(data={"message": "人均 999"}, tokens=0, ms=0)
+
+    monkeypatch.setattr(llm, "complete_json", fake_complete)
+
+    draft = FinalDraft(participants=THREE, slots=two_slots())
+    result = verify([], draft, PLACES)
+    state = GroupState(date=None, participants=list(THREE))
+
+    try:
+        orchestrator.express(state, draft, result)
+    except RuntimeError as exc:
+        assert "999" in str(exc)
+    else:
+        raise AssertionError("应该抛错")

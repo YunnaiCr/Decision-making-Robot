@@ -32,7 +32,9 @@ def test_found_dedupes_the_same_candidate():
 def test_single_candidate_is_wrapped_into_a_list():
     state = GroupState()
     remember(state, ActionRequest(tool="get_option", arguments={"option_id": "p1"}), option("p1", "A"))
-    assert [item.place_id for item in state.found["get_option"]] == ["p1"]
+    # 键是「品类或工具+参数」，测试不绑死具体 key，只看结果
+    ids = [item.place_id for bucket in state.found.values() for item in bucket]
+    assert ids == ["p1"]
 
 
 def test_facts_go_to_facts_not_found():

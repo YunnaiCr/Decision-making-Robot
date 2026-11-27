@@ -187,22 +187,20 @@ def remember(state: GroupState, action: ActionRequest, data: Any) -> None:
     """工具结果写回状态：候选进 found，其他事实进 facts。
 
     规划层下一轮只看得到状态，不写回就等于白查。
+    键带上参数摘要：同一个工具用不同参数查两次，结果不能互相覆盖。
     """
+    args = json.dumps(action.arguments, ensure_ascii=False, sort_keys=True)
     if isinstance(data, Candidate):
         data = [data]
     if isinstance(data, list) and all(isinstance(item, Candidate) for item in data):
-        key = action.arguments.get("category") or action.tool
-        # 同一个 key 的多次查询要合并，不能后一次把前一次冲掉；
-        # 同一个候选只留一份，顺序按第一次出现的来。
-        bucket = state.found.setdefault(key, [])
-        seen = {item.place_id for item in bucket}
-        for item in data:
-            if item.place_id not in seen:
-                bucket.append(item)
-                seen.add(item.place_id)
+        # 键带上参数：同一个工具用不同参数查两次，结果各存各的，不会互相覆盖
+        key = action.arguments.get("category") or f"{action.tool} {args}".strip()
+        old = state.found.get(key, [])
+        seen = {option.place_id for option in old}
+        state.found[key] = old + [option for option in data if option.place_id not in seen]
+
         return
 
-    args = json.dumps(action.arguments, ensure_ascii=False, sort_keys=True)
     state.facts[f"{action.tool} {args}".strip()] = data
 
 
@@ -230,14 +228,31 @@ def plan_facts(state: GroupState, draft: FinalDraft) -> dict:
 
 
 def express(state: GroupState, draft: FinalDraft, result: VerificationResult) -> str:
-    """调模型把事实改写成一句话。只改措辞，不许新增。"""
+    """调模型把事实改写成一句话。只改措辞，不许新增。
+
+    写完先过一遍 lint：编了数字就带着问题重试一次，还不行就抛错，
+    由 to_final 退回模板。宁可话难听，也不能让编的话出街。
+    """
     facts = plan_facts(state, draft)
     facts["unverified"] = [v.detail for v in result.undecided]
-    user = express_prompt.RULES + chr(10) + chr(10) + json.dumps(facts, ensure_ascii=False, indent=2)
-    result_llm = llm.complete_json(
-        system=express_prompt.SYSTEM, user=user, schema=MessageOut.model_json_schema()
-    )
-    return MessageOut.model_validate(result_llm.data).message
+    head = express_prompt.RULES + chr(10) + chr(10) + json.dumps(facts, ensure_ascii=False, indent=2)
+    schema = MessageOut.model_json_schema()
+    problems: list[str] = []
+
+    for _ in range(2):
+        user = head
+        if problems:
+            user += chr(10) + chr(10) + "上一版有这些问题，改掉："
+            user += chr(10) + chr(10).join("- " + p for p in problems)
+        result_llm = llm.complete_json(
+            system=express_prompt.SYSTEM, user=user, schema=schema
+        )
+        message = MessageOut.model_validate(result_llm.data).message
+        problems = express_prompt.lint_message(facts, message)
+        if not problems:
+            return message
+
+    raise RuntimeError("表达层没过检查：" + "；".join(problems))
 
 
 def template_message(state: GroupState, draft: FinalDraft, result: VerificationResult) -> str:
