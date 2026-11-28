@@ -11,6 +11,8 @@ category 不做枚举，属性差异放 Candidate.attrs，所以加一类新东�
 - 外部世界的访问只走这里，别的模块不许直接读 fixtures。
 - 参数不合法抛 ToolError，由 dispatch 统一转成 Observation。
 - 查不到返回空列表或空，不猜也不造。
+- 缺数据统一按「不满足」处理：筛选丢掉、排序丢掉、check_open 返回不可用。
+  以后要做“次级推荐”再说，现在只保一个语义。
 - 属性过滤用 attrs（键值匹配），不要为每个品类加一个专用参数。
 - 加一个工具：写函数 -> 加进 TOOLS -> 加一条 ToolSpec。提示词会自动跟着变。
 """
@@ -27,6 +29,11 @@ from . import sources
 from .models import ActionRequest, Candidate, ErrorInfo, Observation
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
+
+# 一次最多处理多少条：防止某个工具把几百条结果灌进提示词
+MAX_IDS = 50
+MAX_RESULTS = 50
+MAX_HEADCOUNT = 1000
 
 _places: list[Candidate] | None = None
 _travel: dict[tuple[str, str], int] | None = None
@@ -180,6 +187,8 @@ def _match(option: Candidate, filters: Filters) -> bool:
 
 def _pick(option_ids: list[str]) -> list[Candidate]:
     """按编号取候选，保持传入顺序，重复的只留一次。有不认识的编号就报错。"""
+    if len(option_ids) > MAX_IDS:
+        raise ToolError("bad_args", f"一次最多查 {MAX_IDS} 个编号")
     index = places_by_id()
     missing = [option_id for option_id in option_ids if option_id not in index]
     if missing:
@@ -202,13 +211,14 @@ def search_options(
     """按条件找候选。category 自由填，不认识的品类返回空列表。"""
     filters = _collect(tags, avoid_tags, attrs, max_price, open_from, open_to, max_distance, min_score)
     skip = set(exclude_ids or [])
-    return [
+    found = [
         option
         for option in load_places()
         if (category is None or option.category == category)
         and option.place_id not in skip
         and _match(option, filters)
     ]
+    return found[:MAX_RESULTS]
 
 
 def get_option(option_id: str) -> list[Candidate]:
@@ -246,11 +256,10 @@ def rank_options(option_ids: list[str], by: str = "price") -> list[Candidate]:
         raise ToolError("bad_args", f"by 只能是 {' / '.join(_RANKERS)}，收到 {by!r}")
 
     key, reverse = _RANKERS[by]
-    options = _pick(option_ids)
-    known = [option for option in options if key(option) is not None]
-    unknown = [option for option in options if key(option) is None]
+    # 缺这个字段的直接丢掉：和筛选保持同一套「缺数据 = 不满足」的语义。
+    known = [option for option in _pick(option_ids) if key(option) is not None]
     known.sort(key=key, reverse=reverse)
-    return known + unknown
+    return known
 
 
 def alternatives(
@@ -328,12 +337,13 @@ def check_open(option_id: str, start_min: int, end_min: int) -> dict[str, Any]:
         raise ToolError("not_found", f"没有这个候选: {option_id}")
 
     if option.open_min is None or option.close_min is None:
+        # 统一策略：缺数据按「不可用」处理。宁可排不进去，也不猜它开着。
         return {
             "place_id": option.place_id,
             "name": option.name,
-            "open": None,
+            "open": False,
             "window": None,
-            "reason": "没有可用的时间数据，无法判定",
+            "reason": "没有可用的时间数据，按不可用处理",
         }
 
     inside = option.open_min <= start_min and end_min <= option.close_min
@@ -368,8 +378,8 @@ def travel_time(from_option_id: str, to_option_id: str) -> dict[str, Any]:
 
 def estimate_cost(option_ids: list[str], headcount: int = 1) -> dict[str, Any]:
     """把几个候选的人均价加起来，按人数算总价。有未知价时给出 missing。"""
-    if headcount < 1:
-        raise ToolError("bad_args", "headcount 至少是 1")
+    if not 1 <= headcount <= MAX_HEADCOUNT:
+        raise ToolError("bad_args", f"headcount 要在 1-{MAX_HEADCOUNT} 之间")
 
     options = _pick(option_ids)
     missing = [option.place_id for option in options if option.price_per_person is None]
@@ -409,9 +419,9 @@ def catalog() -> dict[str, Any]:
 
 
 def weather(city: str, date: str | None = None) -> dict[str, Any]:
-    """查城市的实时天气（高德）。date 先留着，现在不区分预报日期。"""
+    """查天气。不给 date 返回实时；给了 date（YYYY-MM-DD）只认那一天的预报。"""
     try:
-        return sources.amap_weather(city)
+        return sources.amap_weather(city, date)
     except sources.SourceError as exc:
         raise ToolError(exc.kind, exc.message) from exc
 
@@ -419,7 +429,7 @@ def weather(city: str, date: str | None = None) -> dict[str, Any]:
 def search_remote(keyword: str, city: str, limit: int = 5) -> list[Candidate]:
     """去高德查真实地点。返回的候选没有营业时间，价格也可能缺，所以别当成本地数据。"""
     try:
-        return sources.amap_places(keyword, city, limit=limit)
+        return sources.amap_places(keyword, city, limit=max(1, min(int(limit), 25)))
     except sources.SourceError as exc:
         raise ToolError(exc.kind, exc.message) from exc
 

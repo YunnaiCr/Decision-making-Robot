@@ -16,6 +16,10 @@ from pathlib import Path
 from .models import ChatLog, Message
 
 # QQ 导出的一行消息头：2023-11-04 15:23:45 小明(10001)
+# 读取上限：防止误喂一个超大文件把内存吃满
+MAX_BYTES = 10 * 1024 * 1024
+MAX_MESSAGES = 5000
+
 _HEADER = re.compile(
     r"^(?P<date>\d{4}-\d{2}-\d{2}) (?P<hour>\d{2}):(?P<minute>\d{2}):(?P<second>\d{2}) "
     r"(?P<who>.+?)(?:\((?P<qq>\d+)\))?$"
@@ -84,6 +88,8 @@ def parse_qq_export(text: str, chat_id: str = "qq", title: str = "") -> ChatLog:
     if not messages:
         raise ValueError("这个文件里只有时间戳，没有消息内容")
 
+    messages = messages[:MAX_MESSAGES]
+
     return ChatLog(chat_id=chat_id, title=title or chat_id, date=day, messages=messages)
 
 
@@ -91,6 +97,8 @@ def load_chat(path: Path, title: str | None = None) -> ChatLog:
     """按后缀分派：.json 走自己的格式，其他一律当 QQ 导出的 txt。"""
     if not path.exists():
         raise FileNotFoundError(f"找不到聊天记录文件: {path}")
+    if path.stat().st_size > MAX_BYTES:
+        raise ValueError(f"文件太大（{path.stat().st_size} 字节），上限 {MAX_BYTES}")
 
     if path.suffix.lower() == ".json":
         return ChatLog.model_validate_json(_read_text(path))

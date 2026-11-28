@@ -12,7 +12,7 @@ from typing import Any, Callable
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from . import llm
+from . import llm, privacy
 from .models import ChatLog, FinalPlan, GroupState
 from .prompts import minutes as minutes_prompt
 from .verifier import PRICE_KEY
@@ -51,7 +51,7 @@ def hhmm(minute: int) -> str:
 def build_facts(chat: ChatLog, plan: FinalPlan, state: GroupState | None = None) -> dict[str, Any]:
     """纪要层能看到的全部事实。方案里的数字和它对齐，避免两处对不上。"""
     facts: dict[str, Any] = {
-        "chat": [{"i": m.i, "who": m.who, "text": m.text} for m in chat.messages],
+        "chat": [{"i": m.i, "who": m.who, "text": privacy.redact(m.text)} for m in chat.messages],
         "plan": {
             "status": plan.status,
             "date": plan.date,
@@ -72,7 +72,7 @@ def build_facts(chat: ChatLog, plan: FinalPlan, state: GroupState | None = None)
     }
     if state is not None:
         facts["constraints"] = [c.model_dump(exclude_none=True) for c in state.constraints]
-        facts["unknowns"] = list(state.unknowns)
+        facts["unknowns"] = [privacy.redact(item) for item in state.unknowns]
     return facts
 
 

@@ -105,7 +105,7 @@ def test_example_tool_requests_run_offline(example, monkeypatch):
     monkeypatch.setattr(tools.sources, "amap_places", lambda keyword, city, limit=5: [
         Candidate(place_id="amap-synthetic", name="虚构陶艺地点", category="生活服务",
                   attrs={"source": "amap"})])
-    monkeypatch.setattr(tools.sources, "amap_weather", lambda city: {"city": city, "weather": "晴"})
+    monkeypatch.setattr(tools.sources, "amap_weather", lambda city, date=None: {"city": city, "weather": "晴"})
     action = ActionRequest.model_validate(example["decision"]["action"])
     observation = tools.dispatch(action)
     assert observation.ok, observation.error

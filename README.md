@@ -83,11 +83,19 @@ QQ **没有公开的聊天记录接口**，现实里只有两条路：
 
 配了 `AMAP_KEY` 之后多两个工具：
 
-- `search_remote(keyword, city)`：去高德查真实地点。返回的候选**没有营业时间**，价格也常缺，
-  和 fixtures 里的本地数据不是一回事
-- `weather(city)`：城市实时天气
+- `search_remote(keyword, city)`：去高德查真实地点。营业时间和价格**有就给、没有就留空**，
+  留空的候选会被“缺数据 = 不满足”的规则筛掉
+- `weather(city, date)`：城市天气。不给 `date` 是实时；给 `YYYY-MM-DD` 查那天的预报（只覆盖未来三天）
 
 没配 key 时它们返回 `unavailable`，**不会静默降级成假数据**。测试全部用假 transport，不联网。
+
+配好之后可以真跑一次（会打真实接口）：
+
+```bash
+AMAP_KEY=你的key .venv/bin/python scripts/check_sources.py 北京 电影院
+```
+
+单测用抓下来的报文（`fixtures/remote/`），这个脚本打真接口，两边分开。
 
 接别的平台就照着 `group_agent/sources.py` 里的函数写一个，解析成 `Candidate` 或 dict，
 再到 `tools.py` 注册。注意大多数平台没有公开 API，接之前先看服务条款。
@@ -101,6 +109,29 @@ QQ **没有公开的聊天记录接口**，现实里只有两条路：
 ```
 
 ## 文档
+
+## 隐私
+
+聊天记录里如果出现手机号、身份证、邮箱、银行卡，程序会在**发给模型之前**打码
+（`group_agent/privacy.py`）：
+
+```text
+手机号    →  138****8000
+身份证    →  110101********1234
+邮箱      →  <email>
+银行卡    →  6222********0123
+```
+
+（这里只写打码后的样子——写原始号码会被 `tests/test_privacy.py` 拦下来。）
+
+默认开启，`PRIVACY_REDACT=0` 可临时关掉（不建议）。时间和价格不在打码范围内，
+否则规划就废了。
+
+两件必须知道的事：
+
+- **聊天原文仍会发送给模型服务商**，这是功能本身决定的。不想外发就别用它。
+- **真实聊天导出请放进 `private/`**（已在 `.gitignore`），不要放进 `fixtures/`；
+  `tests/test_privacy.py` 会扫描已提交的文件，发现手机号/身份证/邮箱就报错。
 
 - [架构说明](ARCHITECTURE.md)：为什么这么设计
 - [协作方式](CONTRIBUTING.md)：分支、PR、评审

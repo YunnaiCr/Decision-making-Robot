@@ -177,8 +177,8 @@ def test_rank_options():
     assert ids(rank_options(["p001", "p002", "p003"], by="price")) == ["p002", "p003", "p001"]
     assert ids(rank_options(["p002", "p001", "p003"], by="score")) == ["p001", "p003", "p002"]
     assert ids(rank_options(["p007", "p001", "p003"], by="distance")) == ["p003", "p001", "p007"]
-    # 缺价格的排最后
-    assert ids(rank_options(["p007", "p001"], by="price")) == ["p001", "p007"]
+    # 缺价格的直接丢掉，和筛选同一套语义
+    assert ids(rank_options(["p007", "p001"], by="price")) == ["p001"]
 
 
 def test_rank_options_bad_key():
@@ -339,7 +339,7 @@ def test_remote_tools_go_through_dispatch_when_patched(monkeypatch):
     """真接口要 key，这里把 sources 换成假的，验证工具的接线和形状。"""
     from group_agent import sources
 
-    monkeypatch.setattr(sources, "amap_weather", lambda city: {"city": city, "weather": "晴"})
+    monkeypatch.setattr(sources, "amap_weather", lambda city, date=None: {"city": city, "weather": "晴"})
     monkeypatch.setattr(
         sources,
         "amap_places",
@@ -409,3 +409,16 @@ def test_loop_survives_every_tool(tool):
 
     assert plan.status == "ok"
     assert len(steps) == 2
+
+
+def test_check_open_without_window_is_unavailable(monkeypatch):
+    """缺时间数据按不可用处理，和筛选保持同一套语义。"""
+    from group_agent import tools
+
+    blank = Candidate(place_id="x1", name="没写营业时间", category="other")
+    monkeypatch.setattr(tools, "places_by_id", lambda: {"x1": blank})
+
+    data = tools.check_open("x1", 600, 700)
+    assert data["open"] is False
+    assert data["window"] is None
+    assert "不可用" in data["reason"]
