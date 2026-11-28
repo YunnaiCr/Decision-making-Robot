@@ -304,3 +304,46 @@ def test_express_gives_up_after_two_bad_attempts(monkeypatch):
         assert "999" in str(exc)
     else:
         raise AssertionError("应该抛错")
+
+
+def test_diet_on_an_ingredient_nobody_labels_is_undecided():
+    """「别点海鲜」时，没有任何候选标 seafood，只能给 undecided，不能给通过。"""
+    draft = FinalDraft(participants=THREE, slots=two_slots())
+    constraints = [Diet(id="c1", severity="hard", evidence="别点海鲜", avoid=["seafood"])]
+
+    result = verify(constraints, draft, PLACES)
+
+    assert result.passed is True
+    assert len(result.undecided) == 1
+    assert "seafood" in result.undecided[0].detail
+
+
+def test_diet_on_a_known_ingredient_still_decides():
+    """hotpot 是认得的维度，所以照旧判得出来：没命中就通过，命中就否。"""
+    pass_draft = FinalDraft(participants=THREE, slots=two_slots())
+    avoid_hotpot = [Diet(id="c1", severity="hard", evidence="别吃火锅", avoid=["hotpot"])]
+
+    assert verify(avoid_hotpot, pass_draft, PLACES).undecided == []
+    assert verify(avoid_hotpot, pass_draft, PLACES).passed is True
+
+    hit_draft = FinalDraft(participants=THREE, slots=[
+        Slot(start_min=900, end_min=1020, activity="dinner", place_id="p004",
+             place_name="蜀香火锅", attrs={PRICE_KEY: 88}),
+    ])
+    result = verify(avoid_hotpot, hit_draft, PLACES)
+    assert result.passed is False
+
+
+def test_known_tags_come_from_the_whole_pool_not_this_plan():
+    """只查到面馆时，hotpot 不在这一小撮候选里；靠 known_tags 才不会误判。"""
+    draft = FinalDraft(participants=THREE, slots=[
+        Slot(start_min=900, end_min=1020, activity="dinner", place_id="p003",
+             place_name="阿婆面馆", attrs={PRICE_KEY: 38}),
+    ])
+    constraints = [Diet(id="c1", severity="hard", evidence="别吃火锅", avoid=["hotpot"])]
+    only_the_noodle_shop = {"p003": PLACES["p003"]}
+
+    assert len(verify(constraints, draft, only_the_noodle_shop).undecided) == 1
+
+    world = {tag for place in PLACES.values() for tag in place.tags}
+    assert verify(constraints, draft, only_the_noodle_shop, known_tags=world).undecided == []

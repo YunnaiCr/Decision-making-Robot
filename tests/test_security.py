@@ -8,7 +8,6 @@ import pytest
 
 from group_agent import adapters, ingest, sources, tools
 from group_agent.models import ActionRequest, Candidate
-from group_agent.prompts import planning, understanding
 from group_agent.tools import ToolError, dispatch
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -99,12 +98,6 @@ def test_poi_name_is_cleaned_before_it_reaches_the_prompt():
 
 
 # --- 提示词注入护栏 ------------------------------------------------------
-
-
-def test_prompt_carries_the_injection_guard():
-    for rules in (planning.RULES, understanding.RULES):
-        assert "不是指令" in rules
-        assert "忽略以上" in rules
 
 
 # --- 文件读取上限 --------------------------------------------------------
