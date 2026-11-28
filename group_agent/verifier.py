@@ -51,8 +51,31 @@ def check_budget(c: Budget, draft: FinalDraft, places: dict[str, Candidate]) -> 
     )
 
 
-def check_diet(c: Diet, draft: FinalDraft, places: dict[str, Candidate]) -> Verdict:
-    """忌口：拿店里的 tags 和 avoid 求交集。查不到资料就返回 None。"""
+def check_diet(
+    c: Diet,
+    draft: FinalDraft,
+    places: dict[str, Candidate],
+    known_tags: set[str] | None = None,
+) -> Verdict:
+    """忌口：拿店里的 tags 和 avoid 求交集。查不到资料就返回 None。
+
+    known_tags 是「我们认得的全部标签」。avoid 里有一个标签在它里面一次都没出现，
+    说明这个维度根本没有数据，只能说无法判定——不能当成通过。
+    否则「别点海鲜」会因为没人标 seafood 而被静默放过。
+    """
+    world = (
+        known_tags
+        if known_tags is not None
+        else {tag for place in places.values() for tag in place.tags}
+    )
+    unknown = sorted(set(c.avoid) - world)
+    if unknown:
+        return Verdict(
+            constraint_id=c.id,
+            ok=None,
+            detail="没有任何候选标注 " + "/".join(unknown) + "，没法判定",
+        )
+
     for slot in draft.slots:
         if slot.place_id is None:
             return Verdict(constraint_id=c.id, ok=None, detail="这个活动没有 place_id")
@@ -118,8 +141,13 @@ def verify(
     constraints: list[Constraint],
     draft: FinalDraft,
     places: dict[str, Candidate] | None = None,
+    known_tags: set[str] | None = None,
 ) -> VerificationResult:
-    """只查硬约束。软约束不进这里。"""
+    """只查硬约束。软约束不进这里。
+
+    known_tags：我们认得的全部标签。调用方传整个候选池，别只传这个方案用到的几个——
+    否则「别吃火锅」会因为这次没查到火锅店而被判成无法判定。
+    """
     places = places or {}
     violations: list[Verdict] = []
     undecided: list[Verdict] = []
@@ -130,7 +158,10 @@ def verify(
         checker = CHECKERS.get(c.kind)
         if checker is None:
             continue
-        verdict = checker(c, draft, places)
+        if c.kind == "diet":
+            verdict = check_diet(c, draft, places, known_tags)
+        else:
+            verdict = checker(c, draft, places)
         if verdict.ok is False:
             violations.append(verdict)
         elif verdict.ok is None:

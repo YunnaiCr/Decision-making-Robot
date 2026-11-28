@@ -26,7 +26,7 @@ from .models import (
 )
 from .prompts import express as express_prompt
 from .prompts import planning, understanding
-from .tools import dispatch
+from .tools import dispatch, load_places
 from .verifier import PRICE_KEY, verify
 
 # 超过这么多步还没给出方案，就放弃。
@@ -198,6 +198,11 @@ def remember(state: GroupState, action: ActionRequest, data: Any) -> None:
     state.facts[f"{action.tool} {args}".strip()] = data
 
 
+def known_tags() -> set[str]:
+    """我们认得的全部标签：来自整个候选池，不是这个方案里用到的几个。"""
+    return {tag for place in load_places() for tag in place.tags}
+
+
 def plan_facts(state: GroupState, draft: FinalDraft) -> dict:
     """expression 节点能看到的全部事实。多一项都不给。"""
     slots = []
@@ -326,7 +331,9 @@ def run(
             )
 
         if decision.kind == "final":
-            result = verify(state.constraints, decision.draft, candidates_by_id(state))
+            result = verify(
+                state.constraints, decision.draft, candidates_by_id(state), known_tags()
+            )
             if result.passed:
                 return to_final(state, decision.draft, result, express_fn)
             state.rejections.append(render_rejection(result))
